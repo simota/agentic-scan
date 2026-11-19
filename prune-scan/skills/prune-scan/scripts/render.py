@@ -29,7 +29,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (CONFIDENCES, EXCLUDED, SEVERITIES, RecordError, check_findings,  # noqa: E402
+from findings import (CONFIDENCES, EXCLUDED, SEVERITIES, VERDICTS, RecordError, check_findings,  # noqa: E402
                       check_units, parse_json, record_exists)
 from safe_paths import NOFOLLOW_DIR_FD, SEARCH, descriptor_within, open_directory, within  # noqa: E402
 from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at, tolerant_stdout  # noqa: E402
@@ -305,6 +305,77 @@ def subtraction_groups(findings):
     return now, reduce, decide
 
 
+# console-triage lanes (report_format.console_model): the three subtraction groups,
+# then Unlikely (open, but evidence of use keeps it out of every group), then the
+# closed and excluded records. Lane names follow artifacts/report-style/console/LABELS.md.
+LANES = ("now", "reduce", "decide", "unlikely", "closed", "excluded")
+LANE_TONES = {"now": "high", "reduce": "medium", "decide": "ink", "unlikely": "muted",
+              "closed": "low", "excluded": "accent"}
+CONSOLE_LABELS = {
+    "en": {"lane_now": "REMOVE NOW", "lane_reduce": "REDUCE OR CONSOLIDATE", "lane_decide": "DECIDE WITH A HUMAN",
+           "lane_unlikely": "UNLIKELY", "lane_closed": "CLOSED", "lane_excluded": "EXCLUDED",
+           "note_now": "Open; Valid and Confirmed, and the subtraction removes it.",
+           "note_reduce": "Open; Valid and Confirmed, and the subtraction reduces or consolidates it.",
+           "note_decide": "Open; external use or the owner's agreement is still to confirm.",
+           "note_unlikely": "Open, but the evidence shows it is used; kept, and in no subtraction group.",
+           "note_closed": "Removed (Fixed) or kept by decision (Accepted).",
+           "note_excluded": "False positive or not applicable; kept with the justification."},
+    "ja": {"lane_now": "REMOVE NOW / 今すぐ削除", "lane_reduce": "REDUCE OR CONSOLIDATE / 縮小・統合",
+           "lane_decide": "DECIDE WITH A HUMAN / 人が判断", "lane_unlikely": "UNLIKELY / 可能性低", "lane_closed": "CLOSED / 対応済・受容",
+           "lane_excluded": "EXCLUDED / 誤検知・除外",
+           "note_now": "未対応で、Valid・Confirmed かつ引き算が削除の指摘",
+           "note_reduce": "未対応で、Valid・Confirmed かつ引き算が縮小・統合の指摘",
+           "note_decide": "未対応で、外部での利用やオーナーの合意の確認が残る指摘",
+           "note_unlikely": "未対応だが使われている根拠があり、残す指摘。引き算のどのグループにも入らない",
+           "note_closed": "削除済み（Fixed）または判断して残す（Accepted）",
+           "note_excluded": "誤検知・対象外として根拠つきで保持"},
+}
+
+
+def console_lane(f, groups):
+    """The lane of one record: excluded verdicts, then closed statuses, then subtraction_groups(), then Unlikely."""
+    verdict = f["validation"]["verdict"]
+    if verdict in EXCLUDED:
+        return "excluded"
+    if f["status"] != "Open":
+        return "closed"
+    for key, ids in zip(("now", "reduce", "decide"), groups):
+        if f["id"] in ids:
+            return key
+    return "unlikely"
+
+
+def console_model(data, common, lang, units=None):
+    """The console model for both pages: lanes from console_lane(), inspector text from the record."""
+    T, C, acts = LABELS[lang], CONSOLE_LABELS[lang], ACTIONS[lang]
+    by_unit = {u["id"]: u for u in (units or {}).get("units", [])}
+    by_entry = {e["id"]: e for e in (units or {}).get("entry_points", [])}
+    groups = subtraction_groups(data["findings"])
+    lane_of, details = {}, {}
+    for f in data["findings"]:
+        lane = lane_of[f["id"]] = console_lane(f, groups)
+        sub, validation = f["subtraction"], f["validation"]
+        unit, entry = by_unit.get(f["unit_ref"]), by_entry.get(f.get("entry_ref"))
+        notes = [f"{label}: {text}" for label, text in ((T["basis"], f["basis"]),
+                                                        (T["dynamic"], validation.get("dynamic_checked", ""))) if text]
+        details[f["id"]] = {
+            "where": [{"label": T["element"], "value": f["element"]},
+                      {"label": report.LABELS[lang]["location"], "value": f["location"], "mono": True},
+                      {"label": T["unit"], "value": f"{f['unit_ref']}: {unit['name']}" if unit else f["unit_ref"]},
+                      {"label": T["entry"], "value": f"{entry['id']}: {entry['name']}" if entry else f.get("entry_ref", "")},
+                      {"label": T["occurrences"], "value": "\n".join(f.get("occurrences", [])), "mono": True}],
+            "evidence": {"text": validation.get("evidence", ""), "notes": notes},
+            "fix": "\n".join(text for text in (f"{acts[sub['action']]}: {sub['what']}",
+                                               sub["remains"] and f"{T['remains']}: {sub['remains']}") if text),
+            # The verify text is the next action to_common() gives every open, not-ready finding in a group.
+            "guidance": T["verify_text"] if lane == "decide" else "",
+        }
+    lanes = [{"key": key, "label": C["lane_" + key],
+              "note": C["note_" + key], "tone": LANE_TONES[key]} for key in LANES]
+    return report.console_model(common, lang, skill="prune-scan", lanes=lanes, lane_of=lane_of, verdicts=VERDICTS,
+                                excluded_verdicts=EXCLUDED, details=details)
+
+
 def subtraction_lines(findings, lang):
     T = LABELS[lang]
     return [f"{T[key]} ({T['count'].format(n=len(ids))}): {', '.join(ids)}"
@@ -524,9 +595,10 @@ def render_outputs(a, resources):
         stamp = f'<meta name="{STAMP}" content="sha256:{hashlib.sha256(source).hexdigest()}">'
         if units_source is not None:
             stamp += f'<meta name="{UNITS_STAMP}" content="sha256:{hashlib.sha256(units_source).hexdigest()}">'
+        cm = console_model(data, common, a.lang, units)
         pages = {name: page.replace("<head>", "<head>" + stamp, 1) for name, page in (
-            ("dashboard.html", with_levels(report.render_dashboard(common, a.lang), a.lang, "dashboard")),
-            ("report.html", with_levels(report.render_document(common, a.lang), a.lang, "report")))}
+            ("dashboard.html", with_levels(report.render_dashboard(common, a.lang, cm), a.lang, "dashboard")),
+            ("report.html", with_levels(report.render_document(common, a.lang, cm), a.lang, "report")))}
     except (OSError, ValueError, RecordError, report.FormatError) as e:
         print(f"render.py: {e}", file=sys.stderr)
         return 2

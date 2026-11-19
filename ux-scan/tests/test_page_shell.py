@@ -25,7 +25,8 @@ FLOWS = json.loads((ROOT / "examples" / "flows.sample.json").read_text(encoding=
 
 
 def toolbar(page):
-    start = page.index('<div class="tools">')
+    marker = '<div class="cx-tools">' if '<div class="cx-tools">' in page else '<div class="tools">'
+    start = page.index(marker)
     return page[start:page.index("</div>", start)]
 
 
@@ -55,14 +56,14 @@ class DashboardLinkTests(unittest.TestCase):
             self.assertLess(evidence_at, mockups_at)
             self.assertEqual((tools.count("evidence.html"), tools.count("mockups.html")), (1, 1))
 
-    def test_narrow_toolbar_wraps_only_when_links_were_added(self):
+    def test_links_sit_in_the_band_tools_and_add_no_stylesheet(self):
         page = self.render(self.data)
-        self.assertEqual(page.count(page_shell.NARROW_TOOLBAR_CSS), 1)
-        # After the kit's CSS, so its equally specific no-wrap rule does not win.
-        self.assertLess(page.rindex("--appbar-h:56px"), page.index(page_shell.NARROW_TOOLBAR_CSS))
-        self.assertLess(page.index(page_shell.NARROW_TOOLBAR_CSS), page.index("</head>"))
+        self.assertIn('href="evidence.html"', toolbar(page))
+        # The band's tools wrap by themselves; no rule re-raises the sticky offset under the band.
+        self.assertNotIn("--appbar-h:80px", page)
         # Without companion pages the kit's dashboard is left exactly as rendered.
-        page = render.report.render_dashboard(render.report.validate(render.to_common(self.data, "en", FLOWS)), "en")
+        common = render.report.validate(render.to_common(self.data, "en", FLOWS))
+        page = render.report.render_dashboard(common, "en", render.console_model(self.data, common, "en", FLOWS))
         self.assertEqual(page_shell.link_dashboard(page, []), page)
 
     def test_a_changed_dashboard_template_is_refused(self):
@@ -71,11 +72,6 @@ class DashboardLinkTests(unittest.TestCase):
         page = f"<head></head>{page_shell.DASHBOARD_REPORT_LINK}{page_shell.DASHBOARD_REPORT_LINK}"
         with self.assertRaisesRegex(RuntimeError, "dashboard template changed"):
             page_shell.link_dashboard(page, [("evidence.html", "Evidence")])
-
-    def test_record_text_cannot_move_the_toolbar_rule_out_of_the_head(self):
-        self.data["findings"][0]["title"] = "Stray </head> in a title"
-        page = self.render(self.data)
-        self.assertLess(page.index(page_shell.NARROW_TOOLBAR_CSS), page.index("<body"))
 
 
 class ShellTests(unittest.TestCase):
@@ -126,8 +122,7 @@ class StylesheetTests(unittest.TestCase):
 
     def test_companion_page_css_uses_only_properties_the_dashboard_css_defines(self):
         base = render.report.style.dashboard_css()
-        for name, css in (("evidence.PAGE_CSS", evidence.PAGE_CSS), ("mockups.CSS", mockups.CSS),
-                          ("page_shell.NARROW_TOOLBAR_CSS", page_shell.NARROW_TOOLBAR_CSS)):
+        for name, css in (("evidence.PAGE_CSS", evidence.PAGE_CSS), ("mockups.CSS", mockups.CSS)):
             self.assert_defined(css, base, name)
 
     def test_the_split_slider_is_a_24px_target(self):

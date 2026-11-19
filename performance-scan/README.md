@@ -113,11 +113,12 @@ concurrent updates.
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard in the kit's application shell (app bar, contents sidebar with severity facets, j/k keys, pinned filter bar): counts, findings filterable by severity or Excluded with a live count of what the filter shows, budgets, perspective coverage (tables scroll by keyboard on narrow screens); a Copy-for-LLM button per finding whose result is announced; excluded findings badged as Excluded; light and dark themes |
+| `dashboard.html` | Self-contained console-triage dashboard (triage lanes and inspector, contents sidebar with severity facets, j/k keys, pinned filter bar): counts, findings filterable by severity or Excluded with a live count of what the filter shows, budgets, perspective coverage (tables scroll by keyboard on narrow screens); a Copy-for-LLM button per finding whose result is announced; excluded findings badged as Excluded; light and dark themes |
+| `assessment.html` | Printable console-triage report with status counts, severity tiles, vertical lanes and expanded finding details. Use the browser’s Print command to save as PDF. |
 | `report.md` | Severity and verification counts, scope and method, a findings index, one block per finding, excluded findings, budgets with the findings citing them, perspective coverage, checked and sound, limitations, decisions, next steps |
 
-`findings.py check` enforces the run contract: exactly these three readable,
-nonempty regular files (symbolic links allowed; more only with `--allow NAME`);
+`findings.py check` enforces the run contract: the record and its reports must be readable, nonempty regular files when present
+(symbolic links allowed; only `assessment.html` may be absent, and extra files require `--allow NAME`);
 a complete, schema-valid record whose text encodes as UTF-8; gapless `P-NNN`
 IDs in severity order with `FalsePositive`/`NotApplicable` last;
 `Valid`/`FalsePositive`/`NotApplicable` evidence citing a `path:line`; evidence
@@ -153,7 +154,7 @@ python3 $S/sarif.py   out/findings.json --out "$SCRATCH/perf.sarif"   # code-sca
 - **`findings.py set`** is the owner's triage: it sets `Open`, `Fixed` or
   `Accepted` on the named findings in place (atomically, like `merge`),
   appends `--decision` to `decisions` (prefixed with the IDs when it names
-  none) and with `--render` rewrites `dashboard.html` and `report.md`. A
+  none) and with `--render` rewrites `dashboard.html`, `assessment.html` and `report.md`. A
   finding that becomes `Accepted` needs a decision, and `check` refuses an
   `Accepted` finding that no `decisions` line names. Excluded findings have no
   status to change.
@@ -229,7 +230,7 @@ skills/performance-scan/
   reference/report.md          checklist and findings report formats
   scripts/findings.py          merges JSON fragments; checks the run contract; set triages status
   scripts/citations.py         tells a path:line citation in evidence from look-alikes (used by check)
-  scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
+  scripts/render.py            findings.json -> dashboard.html / assessment.html / report.md (stdlib only)
   scripts/summary.py           findings.json -> the chat summary on stdout
   scripts/issues.py            findings.json -> one issue draft per open finding
   scripts/compare.py           two findings.json -> new / resolved / changed, a CI gate, --carry

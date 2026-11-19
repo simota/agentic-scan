@@ -37,9 +37,7 @@
   function byPriority(a, b) { var x = rank(a), y = rank(b); return x[0] - y[0] || x[1] - y[1]; }
 
   document.title = L.dashboard_title + ' - ' + D.meta.project;
-  byId('h').textContent = D.meta.project;
   byId('meta').textContent = [D.meta.date, D.meta.assessor].filter(Boolean).join(' · ');
-  byId('appbar-project').textContent = D.meta.project;
   document.querySelectorAll('[data-l]').forEach(function (e) { e.textContent = L[e.getAttribute('data-l')]; });
   byId('nav').setAttribute('aria-label', L.contents);
   // Storage is a per-viewer convenience: it can be absent or throw (private
@@ -565,4 +563,9 @@
     listInto(p, D[k], L.not_recorded);
     byId('lists').appendChild(p);
   });
+
+  // Console layer: band, panels, triage board and inspector; its copy reuses the register's Markdown.
+  window.AgenticConsole.mount(D.console, { root: document, copy: function (card) {
+    return copyText(findingMarkdown(ALL.find(function (x) { return x.id === card.id; })));
+  } });
 })();

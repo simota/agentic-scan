@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from file_io import read_regular, tolerant_console, within  # noqa: E402
 from secret_lines import CONFIG_FILE, CONTINUATION_LINES, SHOWN_CHARACTERS, continued_secret_lines, private_key_lines, secret_line  # noqa: E402,F401
-from findings import EXCLUDED, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
+from findings import EXCLUDED, VERDICTS, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
 import report_output as output, report_pdf as pdf, report_format as report  # noqa: E402
 import evidence  # noqa: E402
 import mockups  # noqa: E402
@@ -289,6 +289,69 @@ def inject_levels(pages, meta, lang, chrome):
             "dashboard.html": dashboard.replace("</head>", f"<style>{LEVELS_DASHBOARD_CSS}</style></head>", 1)}
 
 
+def next_action(f):
+    """"fix" (Open, Valid, with a fix), "verify" (any other open, counted finding) or None: to_common()'s next action."""
+    verdict = f["validation"]["verdict"]
+    if f["status"] != "Open" or verdict in EXCLUDED:
+        return None
+    return "fix" if verdict == "Valid" and bool(f.get("fix", "").strip()) else "verify"
+
+
+# console-triage lanes (report_format.console_model): the two next actions, then
+# the closed and excluded records. Lane names follow artifacts/report-style/console/LABELS.md.
+LANES = ("fix", "verify", "closed", "excluded")
+LANE_TONES = {"fix": "high", "verify": "medium", "closed": "low", "excluded": "accent"}
+CONSOLE_LABELS = {
+    "en": {"lane_fix": "FIX", "lane_verify": "VERIFY FIRST", "lane_closed": "CLOSED", "lane_excluded": "EXCLUDED",
+           "note_fix": "Open; Valid, with a recorded fix.",
+           "note_verify": "Open; the user's reach or compensation elsewhere is still to confirm, or no fix is recorded.",
+           "note_closed": "Fix recorded or kept by decision (Accepted).",
+           "note_excluded": "False positive or not applicable; kept with the justification."},
+    "ja": {"lane_fix": "FIX / 修正", "lane_verify": "VERIFY FIRST / 先に検証", "lane_closed": "CLOSED / 対応済・受容", "lane_excluded": "EXCLUDED / 誤検知・除外",
+           "note_fix": "未対応で、Valid かつ修正方針が記録された指摘",
+           "note_verify": "未対応で、利用者の到達や他の箇所での補完の確認が残る指摘、または修正方針が未記録の指摘",
+           "note_closed": "修正の申告（Fixed）または受容（Accepted）",
+           "note_excluded": "誤検知・対象外として根拠つきで保持"},
+}
+
+
+def console_lane(f):
+    """The lane of one record: excluded verdicts, then closed statuses, then next_action()."""
+    if f["validation"]["verdict"] in EXCLUDED:
+        return "excluded"
+    if f["status"] != "Open":
+        return "closed"
+    return next_action(f)
+
+
+def console_model(data, common, lang, flows=None):
+    """The console model for both pages: lanes from console_lane(), inspector text from the record."""
+    T, C, prio = LABELS[lang], CONSOLE_LABELS[lang], PRIORITY[lang]
+    by_flow = {fl["id"]: fl for fl in (flows or {}).get("flows", [])}
+    lane_of, details = {}, {}
+    for f in data["findings"]:
+        lane = lane_of[f["id"]] = console_lane(f)
+        validation, flow = f["validation"], by_flow.get(f["flow_ref"])
+        notes = [f"{label}: {text}" for label, text in ((T["observed"], f.get("observed", "")),
+                                                        (T["expected"], f.get("expected", "")),
+                                                        (T["intent"], validation.get("intent_checked", ""))) if text]
+        details[f["id"]] = {
+            "where": [{"label": report.LABELS[lang]["location"], "value": f["location"], "mono": True},
+                      {"label": T["screen"], "value": f["screen"]},
+                      {"label": T["viewport"], "value": f.get("viewport", "")},
+                      {"label": T["flow"], "value": (f"{f['flow_ref']}: {flow['name']} ({prio[flow['priority']]})"
+                                                     if flow else f["flow_ref"])},
+                      {"label": T["criterion"], "value": f["criterion"]},
+                      {"label": T["occurrences"], "value": "\n".join(f.get("occurrences", [])), "mono": True}],
+            "evidence": {"text": validation.get("evidence", ""), "notes": notes},
+            "fix": f.get("fix", ""),
+            "guidance": T["verify_text"] if lane == "verify" else "",
+        }
+    lanes = [{"key": key, "label": C["lane_" + key], "note": C["note_" + key], "tone": LANE_TONES[key]} for key in LANES]
+    return report.console_model(common, lang, skill="ux-scan", lanes=lanes, lane_of=lane_of, verdicts=VERDICTS,
+                                excluded_verdicts=EXCLUDED, details=details)
+
+
 def to_common(data, lang, flows=None, repo=None):
     """data (findings.json) as a scan-report/1 record."""
     T, fam, prio = LABELS[lang], FAMILIES[lang], PRIORITY[lang]
@@ -309,7 +372,8 @@ def to_common(data, lang, flows=None, repo=None):
             fields.append(mockup_field)
         if evidence_field := evidence.field(f, lang):
             fields.append(evidence_field)
-        fix_is_action = f["status"] == "Open" and verdict == "Valid" and bool(f.get("fix", "").strip())
+        action = next_action(f)
+        fix_is_action = action == "fix"
         if fix_is_action:  # Shown once, as the next action.
             fields = [(k, v) for k, v in fields if k != T["fix"]]
         item = {"id": f["id"], "title": f["title"], "severity": f["severity"], "status": f["status"],
@@ -318,7 +382,7 @@ def to_common(data, lang, flows=None, repo=None):
                 "location": f["location"], "excluded": verdict in EXCLUDED,
                 "fields": [{"label": k, "text": v} for k, v in fields if v],
                 "references": f.get("references", [])}
-        if f["status"] == "Open" and verdict not in EXCLUDED:
+        if action:
             item["action"] = ({"label": T["fix"], "text": f.get("fix", "")} if fix_is_action
                               else {"label": T["verify"], "text": T["verify_text"]})
         excerpt = snippet(repo, f["location"], T["masked"])
@@ -370,8 +434,9 @@ def main(argv=None):
         files = evidence.load(record_dir, data)
         href = Path(os.path.relpath(record_dir / evidence.DIRECTORY, out.absolute())).as_posix()
         common = report.validate(to_common(data, a.lang, flows, repo))
-        pages = {"dashboard.html": report.render_dashboard(common, a.lang),
-                 "report.html": report.render_document(common, a.lang)}
+        cm = console_model(data, common, a.lang, flows)
+        pages = {"dashboard.html": report.render_dashboard(common, a.lang, cm),
+                 "report.html": report.render_document(common, a.lang, cm)}
         pages = inject_levels(pages, data["meta"], a.lang, report.labels_for(common, a.lang))
         companions = []  # (page, label) linked from the dashboard's app bar, in this order
         if files:

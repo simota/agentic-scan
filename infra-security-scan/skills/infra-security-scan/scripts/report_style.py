@@ -31,3 +31,11 @@ def document_css(running_footer):
 def dashboard_css():
     """Stylesheet for the interactive dashboard (light and dark themes)."""
     return _asset("dashboard.css")
+
+
+def console_css():
+    return _asset("console.css")
+
+
+def console_js():
+    return _asset("console.js")

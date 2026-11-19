@@ -60,7 +60,7 @@ class ReviewRenderingTests(unittest.TestCase):
                 source = render.render_html(doc, lang)
                 parsed = ReportHTML(source)
                 self.assertEqual(parsed.code_blocks, [command])
-                self.assertEqual(parsed.tags.count("script"), 1)  # Fixed dashboard script only.
+                self.assertEqual(parsed.tags.count("script"), 2)  # Data script + fixed dashboard script.
                 self.assertNotIn("email", parsed.tags)
                 self.assertNotIn("read-only", parsed.tags)
                 self.assertIn("No &lt;email&gt; field", source)

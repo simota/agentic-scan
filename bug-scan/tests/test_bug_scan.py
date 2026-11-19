@@ -919,10 +919,13 @@ class PageStructureTests(unittest.TestCase):
         self.dashboard, self.document = render.build(self.record, self.surfaces, self.history, "ja")
 
     def test_the_register_leads_and_contents_follow_page_order(self):
-        page = [self.dashboard.index(mark) for mark in ('<section id="findings"', '<section id="figures"', '<div class="lists"')]
+        page = [self.dashboard.index(mark) for mark in ('<section id="findings"', '<section id="overview"',
+                                                       '<section id="figures"', '<div class="lists"')]
         self.assertEqual(page, sorted(page))
+        self.assertTrue(self.dashboard.split("<main>\n", 1)[1].startswith('<section id="findings"'))
         nav = self.dashboard[self.dashboard.index('class="nav-links"'):self.dashboard.index('class="facets"')]
-        self.assertEqual(re.findall(r'href="#([a-z-]+)"', nav), ["overview", "priority-section", "coverage", "findings", "figures", "lists"])
+        self.assertEqual(re.findall(r'href="#([a-z-]+)"', nav),
+                         ["triage", "findings", "overview", "priority-section", "coverage", "figures", "lists"])
 
     def test_the_printable_report_has_no_focus_stop_that_does_nothing(self):
         self.assertNotIn('tabindex="0"', self.document)

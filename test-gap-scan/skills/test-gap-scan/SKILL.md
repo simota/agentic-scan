@@ -69,7 +69,7 @@ Neighbours, and where their questions go instead:
 | Granularity | One finding per remedy, i.e. per change to the tests that can be planned and reviewed on its own. Ten tests asserting only a status code in one file are one finding listing them in `trace`; a gap that needs a seam and then a behaviour test is two findings linked by `depends_on` when the seam serves other findings too |
 | IDs | `F-001`… numbered without gaps in severity order (then path), excluded verdicts last. `scripts/findings.py renumber` restores the order and rewrites ID mentions, including `depends_on` and `plan`. After it, use only the new IDs it prints |
 | Severity | The table below, decided before testability and confidence; neither raises or lowers it |
-| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
+| Outputs | `findings.json`, `dashboard.html`, `assessment.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Effort | When the effort runs short, close units in critical-flow order instead of thinning every unit. `limitations` gives the count of unreached units and ledger entries |
 | Scratch | A new, empty directory for working records (critical-flow list, hotspot table, test map, ledger, trace rows, fragments), outside both the audited repository and the output directory: a new directory under the host's session scratch when it names one, otherwise under `$TMPDIR`. Name its path in the chat summary |
@@ -138,7 +138,8 @@ skill's directory, not the audited repository.
 |---|---|
 | Chat summary | The shape in `reference/report.md`: first line status and counts, the evidence line, findings by severity, the plan's batches, decisions for a human, what was checked and the next step |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard in the bundled report kit's application shell (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings, test idiom ledger, perspective coverage, how to read the levels |
+| `dashboard.html` | Self-contained console-triage dashboard (triage lanes and inspector, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings, test idiom ledger, perspective coverage, how to read the levels |
+| `assessment.html` | Printable HTML with the same triage lanes and detailed findings. Open it in a browser and print to PDF. |
 | `report.md` | The written assessment: verdict counts, then scope and method, how to read the levels, findings, plan, idiom ledger, perspective coverage, checked and adequately tested, what could not be checked, decisions for a human, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the

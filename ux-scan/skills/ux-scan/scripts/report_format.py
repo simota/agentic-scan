@@ -54,7 +54,7 @@ LABELS = {
         "open_summary_one": "1 open finding, not High or Medium.",
         "urgent": "Open High + Medium", "open_total": "Open", "closed_total": "Fixed / Accepted",
         "included": "Included", "excluded_count": "Excluded",
-        "report_link": "Printable report", "theme": "Theme", "jump": "Skip to findings",
+        "report_link": "Printable report", "theme": "Toggle color theme", "jump": "Skip to findings",
         "overview": "Overview", "by_severity": "By severity", "by_category": "By category", "by_status": "By status",
         "count_basis": "Counts cover included findings only.",
         "filters_record_set": "Records", "included_set": "Included", "excluded_set": "Excluded", "all_records": "All",
@@ -94,7 +94,7 @@ LABELS = {
         "open_summary": "未対応の指摘が{n}件あります（High・Medium はありません）。",
         "urgent": "未対応 High + Medium", "open_total": "未対応", "closed_total": "修正済み / 受容",
         "included": "対象", "excluded_count": "除外",
-        "report_link": "印刷用報告書", "theme": "表示切替", "jump": "指摘一覧へ移動",
+        "report_link": "印刷用レポート", "theme": "配色を切り替え", "jump": "指摘一覧へ移動",
         "overview": "概要グラフ", "by_severity": "重大度別", "by_category": "分類別", "by_status": "状態別",
         "count_basis": "件数は除外を除く指摘のみを数えています。",
         "filters_record_set": "記録", "included_set": "対象", "excluded_set": "除外", "all_records": "すべて",
@@ -106,12 +106,48 @@ LABELS = {
         "link": "リンク",
         "view_all": "すべての指摘を見る", "queue_more": "未対応{total}件中{shown}件を表示しています。",
         "source_note": "記録されたレポートデータから生成しています。このページは何も変更しません。",
-        "no_script": "このダッシュボードには JavaScript が必要です。印刷用報告書をご覧ください:",
+        "no_script": "このダッシュボードには JavaScript が必要です。印刷用レポートをご覧ください:",
         "contents": "目次", "records": "判断事項と次の手順", "shortcuts": "キー操作",
         "key_search": "検索", "key_move": "次・前の指摘", "key_toggle": "詳細の表示・非表示",
     },
 }
+# console-triage layer (report_assets/console.css, console.js). The lanes and
+# their names come from the calling scan; these are the shared panel strings.
+LABELS["en"].update(
+    cx_report_link="Printable report", cx_theme="Toggle color theme",
+    cx_readout="Record status", cx_readout_open="open", cx_readout_closed="closed", cx_readout_excluded="excluded",
+    cx_severity_h="Severity", cx_severity_note="{n} included records; {x} excluded are not counted",
+    cx_tile_sub="open {open} · closed {closed}", cx_legend_cell="1 cell = 1 record.",
+    cx_legend_open="open", cx_legend_closed="fixed or accepted",
+    cx_verdict_h="Verdict", cx_verdict_note="all {n} records; excluded verdicts kept as their own block",
+    cx_perspective_h="Perspectives", cx_perspective_note="{n} perspectives",
+    cx_perspectives_empty="No perspectives recorded.",
+    cx_board_h="Triage", cx_board_note="every record in one lane; pick a card to inspect it",
+    cx_lane_empty="None", cx_inspector_h="Inspector", cx_inspector_empty="No records to inspect.",
+    cx_copy="Copy for Issue / LLM", cx_open_record="Open in register",
+    cx_where_h="Where", cx_evidence_h="Evidence", cx_evidence_method="method: {method}", cx_fix_h="Fix direction",
+    cx_empty_records="No records.", cx_read_only="read-only", cx_closed_lanes="Closed and excluded records",
+    cx_queue_note="Open findings in the triage lanes, top to bottom; each lane most severe first.")
+LABELS["ja"].update(
+    cx_report_link="印刷用レポート", cx_theme="配色を切り替え",
+    cx_readout="対応状況", cx_readout_open="open", cx_readout_closed="closed", cx_readout_excluded="excluded",
+    cx_severity_h="Severity", cx_severity_note="集計対象 {n} 件（除外 {x} 件は数えない）",
+    cx_tile_sub="未解決 {open} · 対応済 {closed}", cx_legend_cell="1 マス = 1 件。",
+    cx_legend_open="未解決", cx_legend_closed="対応済み（Fixed / Accepted）",
+    cx_verdict_h="Verdict", cx_verdict_note="記録 {n} 件の判定。除外の判定は独立した区画",
+    cx_perspective_h="Perspectives", cx_perspective_note="観点 {n}",
+    cx_perspectives_empty="観点の記録がありません。",
+    cx_board_h="Triage", cx_board_note="全件をいずれかのレーンに置いています。カードを選ぶと詳細を表示します",
+    cx_lane_empty="該当なし", cx_inspector_h="Inspector", cx_inspector_empty="表示できる記録がありません。",
+    cx_copy="Issue / LLM 用にコピー", cx_open_record="一覧で開く",
+    cx_where_h="該当箇所", cx_evidence_h="根拠", cx_evidence_method="method: {method}", cx_fix_h="修正方針",
+    cx_empty_records="記録がありません。", cx_read_only="read-only", cx_closed_lanes="対応済み・除外の記録",
+    cx_queue_note="未対応の指摘をトリアージのレーン順に示します。各レーンの中は重大度の高い順です。")
 LABEL_KEYS = set().union(*(labels.keys() for labels in LABELS.values()))
+# Lanes the console treats as finished: listed after the priority queue, never in it.
+CLOSED_LANES = ("closed", "excluded")
+VERDICT_TONES = {"Valid": "strong", "Likely": "mid", "Unverified": "hatch", "Unlikely": "weak"}
+SEVERITY_TONES = {"High": "high", "Medium": "medium", "Low": "low", "Info": "info"}
 
 
 class FormatError(Exception):
@@ -393,6 +429,88 @@ def headline(data, L):
     return plural(L, "open_summary", c["open"]) if c["open"] else L["no_open"]
 
 
+def console_model(data, lang, *, skill, lanes, lane_of, verdicts, excluded_verdicts, details, labels=None):
+    """The normalized console model (artifacts/report-style/console/INTEGRATION.md) for both pages.
+
+    The calling scan decides every lane from its own rules: lanes is the ordered
+    [{key, label, note, tone}], lane_of maps each finding id to one key and details
+    maps it to the inspector's {where, evidence, fix, guidance}. Lanes keyed
+    "closed" or "excluded" (CLOSED_LANES) are the finished ones.
+    """
+    L = labels_for(data, lang)
+    c = counts(data)
+    findings = []
+    for i, f in enumerate(data["findings"]):
+        excluded = bool(f.get("excluded"))
+        d = details[f["id"]]
+        findings.append({
+            "id": f["id"], "severity": f["severity"], "status": f["status"],
+            "status_label": L["excluded_short"] if excluded else f["status"],
+            "verdict": f.get("verdict", ""), "title": f["title"], "location": f.get("location", ""),
+            "lane": lane_of[f["id"]], "open": f["status"] == "Open" and not excluded, "excluded": excluded,
+            "anchor": anchor(i), "tags": [t for t in (f.get("category"), f.get("confidence")) if t],
+            "where": [row for row in d.get("where", []) if row.get("value")],
+            "evidence": d.get("evidence", {}), "fix": d.get("fix", ""), "guidance": d.get("guidance", ""),
+        })
+    model_labels = {key[3:]: value for key, value in L.items() if key.startswith("cx_")}
+    model_labels.update(copied=L["copied"], copy_failed=L["copy_failed"], fix_missing=L["not_recorded"],
+                        evidence_missing=L["not_recorded"], not_recorded=L["not_recorded"], location=L["location"])
+    model_labels.update(labels or {})
+    m = data["meta"]
+    return {
+        "meta": {"skill": skill, "title": m["project"], "title_id": "cx-title",
+                 "context": [m.get("date", ""), m.get("commit", ""), m.get("scope", ""), L["cx_read_only"]],
+                 "headline": headline(data, L)},
+        "counts": {"open": c["open"], "closed": c["fixed"] + c["accepted"], "excluded": c["excluded"],
+                   "total": len(data["findings"])},
+        "severities": list(SEVERITIES),
+        "verdicts": [{"key": v, "label": v, "excluded": v in excluded_verdicts,
+                      **({"tone": VERDICT_TONES[v]} if v in VERDICT_TONES else {})} for v in verdicts],
+        "lanes": [dict(lane) for lane in lanes],
+        # No finding names a perspective by its recorded name, so every lamp stays unlit.
+        "perspectives": [{**{k: p[k] for k in ("name", "result", "note") if k in p}, "tone": "muted", "on": False}
+                         for p in data.get("perspectives", [])],
+        "findings": findings,
+        "labels": model_labels,
+    }
+
+
+def console_band_html(cm, kind=""):
+    """Static band header (report): wordmark, skill, title, context and the open / closed / excluded readout."""
+    meta, counts_, L = cm["meta"], cm["counts"], cm["labels"]
+    context = "".join(f"<span>{esc(part)}</span>" for part in meta["context"] if part)
+    readout = "".join(f"<div><dt>{esc(L['readout_' + key])}</dt><dd>{counts_[key]}</dd></div>"
+                      for key in ("open", "closed", "excluded"))
+    return (f"<header class='cx-band'><div class='cx-band-in'><div>"
+            f"<p class='cx-wm'><span><span class='cx-perm' aria-hidden='true'>r--</span> agentic-scan</span>"
+            f"<span class='cx-skill'>{esc(meta['skill'])}</span></p>"
+            + (f"<p class='cx-kind'>{esc(kind)}</p>" if kind else "") +
+            f"<h1>{esc(meta['title'])}</h1>" + (f"<p class='cx-ctx'>{context}</p>" if context else "") +
+            f"</div><dl class='cx-readout' aria-label='{esc(L['readout'])}' data-cx-readout>{readout}</dl></div></header>")
+
+
+def console_tiles_html(cm):
+    """Static severity tiles: one cell per included record, filled while it is open."""
+    L, kept = cm["labels"], [f for f in cm["findings"] if not f["excluded"]]
+    tiles = []
+    for sev in cm["severities"]:
+        items = [f for f in kept if f["severity"] == sev]
+        opened = [f for f in items if f["open"]]
+        cells = "<i class='cx-on'></i>" * min(len(opened), 120) + "<i></i>" * max(0, min(len(items), 120) - len(opened))
+        if len(items) > 120:
+            cells += f"<span class='cx-more'>+{len(items) - 120}</span>"
+        ids = " ".join(f["id"] for f in opened[:6]) + (" …" if len(opened) > 6 else "")
+        sub = L["tile_sub"].format(open=len(opened), closed=len(items) - len(opened)) + (f" · {ids}" if ids else "")
+        tiles.append(f"<div class='cx-tile cx-c-{SEVERITY_TONES[sev]}' data-severity='{esc(sev)}'>"
+                     f"<span class='cx-l'>{esc(sev)}</span><span class='cx-n'>{len(items)}</span>"
+                     f"<span class='cx-cells' aria-hidden='true'>{cells}</span><span class='cx-s'>{esc(sub)}</span></div>")
+    note = L["severity_note"].format(n=len(kept), x=len(cm["findings"]) - len(kept))
+    return (f"<section class='cx-sev' aria-labelledby='cx-sev-h'><h2 class='cx-ph' id='cx-sev-h'><b>{esc(L['severity_h'])}</b>"
+            f"<span>{esc(note)}</span></h2><div class='cx-tiles'>{''.join(tiles)}</div>"
+            f"<p class='cx-legend'>{esc(L['legend_cell'])}<i class='cx-on'></i>{esc(L['legend_open'])} "
+            f"<i></i>{esc(L['legend_closed'])}</p></section>")
+
+
 def snippet_html(snippet):
     first, last = snippet["hit"]
     rows = []
@@ -422,8 +540,12 @@ def refs_html(refs, L):
     return f"<ul class='refs'>{items}</ul>"
 
 
-def render_document(data, lang):
-    """The printable report (report.html), typeset per docs/design.md; print it with pdf.to_pdf."""
+def render_document(data, lang, console):
+    """The printable report (report.html), typeset per docs/design.md; print it with pdf.to_pdf.
+
+    console is the scan's console_model(): its band and tiles open the page, and the
+    priority queue follows its lanes in order.
+    """
     validate(data)
     L = labels_for(data, lang)
     m, c = data["meta"], counts(data)
@@ -453,18 +575,52 @@ def render_document(data, lang):
                f"<thead><tr><th scope='col'></th>{sev_head}</tr></thead><tbody>{metric_rows}</tbody></table>")
 
     open_fs = [f for f in fs if f["status"] == "Open"]
-    queue_rows = "".join(
-        f"<tr><td><a href='#{anchors[id(f)]}'>{esc(f['id'])}</a><br><span class='badge {f['severity']}'>{f['severity']}</span></td>"
+
+    def queue_table(items):
+        queue_rows = "".join(
+            f"<tr><td><a href='#{anchors[id(f)]}'>{esc(f['id'])}</a><br><span class='badge {f['severity']}'>{f['severity']}</span></td>"
         f"<td><div class='queue-title'>{esc(f['title'])}</div>"
         f"<div class='queue-location'><code>{esc(f.get('location'))}</code></div></td>"
         f"<td class='queue-action'>"
         + (f"<strong>{esc(f['action']['label'])}</strong>{esc(f['action'].get('text'))}" if f.get("action") else esc(L["none"]))
-        + "</td></tr>" for f in open_fs)
-    queue = (f"<table class='queue'><caption>{esc(L['priority_caption'])}</caption>"
-             "<colgroup><col class='ref-col'><col class='finding-col'><col class='action-col'></colgroup>"
-             f"<thead><tr><th scope='col'>{esc(L['ref'])}</th><th scope='col'>{esc(L['title_col'])}</th>"
-             f"<th scope='col'>{esc(L['action'])}</th></tr></thead><tbody>{queue_rows}</tbody></table>"
-             if open_fs else f"<p class='small'>{esc(L['no_open'])}</p>")
+            + "</td></tr>" for f in items)
+        return (f"<table class='queue'><caption>{esc(L['priority_caption'])}</caption>"
+                "<colgroup><col class='ref-col'><col class='finding-col'><col class='action-col'></colgroup>"
+                f"<thead><tr><th scope='col'>{esc(L['ref'])}</th><th scope='col'>{esc(L['title_col'])}</th>"
+                f"<th scope='col'>{esc(L['action'])}</th></tr></thead><tbody>{queue_rows}</tbody></table>")
+
+    # The dashboard board's lanes, top to bottom: the open ones form the priority
+    # queue (each in priority order); the closed and excluded ones follow it.
+    lane_of = {f["id"]: f["lane"] for f in console["findings"]}
+    cx_labels = console["labels"]
+
+    def lane_html(n, lane, count, body):
+        return (f"<div class='cx-doc-lane cx-c-{esc(lane['tone'])}' id='lane-{esc(lane['key'])}' data-lane='{esc(lane['key'])}'>"
+                f"<h3><span>{n}. {esc(lane['label'])}</span><span class='cx-count'>{count}</span></h3>"
+                + (f"<p class='cx-lane-note small'>{esc(lane['note'])}</p>" if lane.get("note") else "")
+                + f"{body}</div>")
+
+    def empty_lane():
+        return f"<p class='small'>{esc(cx_labels['lane_empty'])}</p>"
+
+    open_lanes, closed_lanes = [], []
+    for n, lane in enumerate(console["lanes"], 1):
+        if lane["key"] in CLOSED_LANES:
+            records = [f for f in data["findings"] if lane_of[f["id"]] == lane["key"]]
+            rows = "".join(
+                f"<li><span><a href='#{anchors[id(f)]}'>{esc(f['id'])}</a><br>"
+                f"<span class='badge {f['severity']}'>{f['severity']}</span></span>"
+                f"<span>{esc(f['title'])}<span class='cx-loc'>{esc(f.get('location'))}</span></span>"
+                f"<span class='cx-state'>{esc(L['excluded_short'] if f.get('excluded') else f['status'])}"
+                f" · {esc(f.get('verdict') or L['none'])}</span></li>" for f in records)
+            closed_lanes.append(lane_html(n, lane, len(records),
+                                          f"<ul class='cx-doc-list'>{rows}</ul>" if rows else empty_lane()))
+        else:
+            items = [f for f in open_fs if lane_of[f["id"]] == lane["key"]]
+            open_lanes.append(lane_html(n, lane, len(items), queue_table(items) if items else empty_lane()))
+    queue = "".join(open_lanes) if open_fs else f"<p class='small'>{esc(L['no_open'])}</p>"
+    closed_html = (f"<section id='closed-lanes'><h2>{esc(L['cx_closed_lanes'])}</h2>{''.join(closed_lanes)}</section>"
+                   if closed_lanes else "")
 
     lists = "".join(f"<section id='{k.replace('_', '-')}'><h2>{esc(L[k])}</h2>{bullets(data.get(k, []), 'not_recorded')}</section>"
                     for k in ("decisions", "next_steps") if data.get(k))
@@ -524,15 +680,17 @@ def render_document(data, lang):
                      if excluded else "")
     summary = data.get("summary", "")
     return f"""<!doctype html>
-<html lang="{esc(lang)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{esc(L['title'])} - {esc(m['project'])}</title><style>{style.document_css(L['running_footer'])}</style></head><body>
-<header class="report-header"><p class="kicker">{esc(L['kind'])}</p><h1>{esc(L['title'])}</h1>
-<p class="project">{esc(m['project'])}</p>{meta}</header>
+<html lang="{esc(lang)}" class="cx-doc"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{esc(L['title'])} - {esc(m['project'])}</title><style>{style.document_css(L['running_footer'])}{style.console_css()}</style></head><body>
+{console_band_html(console, L['title'])}
+<header class="report-header"><p class="kicker">{esc(L['kind'])}</p>{meta}</header>
+{console_tiles_html(console)}
 <main>
 <p class="lead prose">{prose_html(summary if summary.strip() else L['no_summary'])}</p>
 <section class="summary-section" id="summary"><h2>{esc(L['summary'])}</h2><p>{esc(headline(data, L))}</p>{metrics}
 <h3 class="limit-heading">{esc(L['limitations'])}</h3><div class="limits">{bullets(data.get('limitations', []), 'limitations_empty')}</div></section>
-<section id="priority-queue"><h2>{esc(L['priority'])}</h2><p class="section-note">{esc(L['priority_note'])}</p>{queue}</section>
+<section id="priority-queue"><h2>{esc(L['priority'])}</h2><p class="section-note">{esc(L['cx_queue_note'])}</p>{queue}</section>
+{closed_html}
 {lists}
 <section id="recorded-coverage"><h2>{esc(L['coverage'])}</h2><p class="section-note">{esc(L['coverage_note'])}</p>{coverage}
 <h3>{esc(L['checked_ok'])}</h3>{bullets(data.get('checked_ok', []), 'not_recorded')}</section>
@@ -554,27 +712,33 @@ __CSS__
 </head>
 <body>
 <a class="skip" href="#findings" data-l="jump"></a>
-<header class="appbar"><div class="appbar-in"><span class="brand"><span data-l="kind"></span><span class="appbar-project" id="appbar-project"></span></span><div class="tools"><a class="button" href="report.html" data-l="report_link"></a><button id="theme" type="button" data-l="theme"></button></div></div></header>
+<header class="cx-band"><div class="cx-band-in"><div data-cx="ident"></div><div class="cx-side"><dl class="cx-readout" data-cx="readout"></dl><div class="cx-tools"><a class="button" href="report.html" data-l="cx_report_link"></a><button id="theme" type="button" data-l="cx_theme"></button></div></div></div></header>
+<div class="cx" id="console"><div class="cx-grid">
+<section class="cx-p cx-sev" data-cx="severity" aria-labelledby="cx-sev-h"></section>
+<section class="cx-p cx-ver" data-cx="verdicts" aria-labelledby="cx-ver-h"></section>
+<section class="cx-p cx-cov" data-cx="perspectives" aria-labelledby="cx-cov-h"></section>
+<section class="cx-triage" id="triage" tabindex="-1" aria-labelledby="cx-triage-h"><h2 class="cx-ph" id="cx-triage-h"><b data-l="cx_board_h"></b><span data-l="cx_board_note"></span></h2><div class="cx-triage-in"><div class="cx-board" data-cx="board"></div><aside class="cx-insp" data-cx="inspector" aria-live="polite"></aside></div></section>
+</div></div>
 <div class="shell">
 <nav class="sidebar" id="nav"><h2 class="nav-title" data-l="contents"></h2><ol class="nav-links">
-<li><a href="#overview" data-l="summary"></a></li><li><a href="#priority-section" data-l="priority"></a></li><li><a href="#coverage" data-l="coverage"></a></li><li><a href="#findings" data-l="register"></a></li><li><a href="#lists" data-l="records"></a></li>
+<li><a href="#triage" data-l="cx_board_h"></a></li><li><a href="#findings" data-l="register"></a></li><li><a href="#overview" data-l="summary"></a></li><li><a href="#priority-section" data-l="priority"></a></li><li><a href="#coverage" data-l="coverage"></a></li><li><a href="#lists" data-l="records"></a></li>
 </ol><div class="facets"><h2 class="nav-title" data-l="severity"></h2><div id="facets"></div></div>
 <dl class="keys"><dt data-l="shortcuts" class="nav-title"></dt><dd><kbd>/</kbd> <span data-l="key_search"></span></dd><dd><kbd>j</kbd> <kbd>k</kbd> <span data-l="key_move"></span></dd><dd><kbd>Enter</kbd> <span data-l="key_toggle"></span></dd></dl></nav>
 <main>
-<section id="overview" tabindex="-1" aria-labelledby="h">
-<div class="hero"><div><div class="eyebrow" data-l="dashboard_title"></div><h1 id="h"></h1><div class="meta" id="meta"></div></div></div>
-<div class="summary-banner" id="summary"></div>
-<div class="cards" id="cards"></div>
-</section>
-<section id="priority-section" tabindex="-1" aria-labelledby="priority-heading"><div class="section-head"><div><h2 id="priority-heading" data-l="priority"></h2><p data-l="priority_note"></p></div><a href="#findings" data-l="view_all"></a></div><div class="priority-list" id="priority"></div><p class="report-note" id="queue-note"></p></section>
-<details class="panel coverage" id="coverage" tabindex="-1" open><summary><span data-l="coverage"></span><span class="small" id="coverage-count"></span></summary><p data-l="coverage_note"></p><dl class="scope-meta" id="scope-meta"></dl><div class="coverage-columns"><div id="perspectives"></div><div><h3 data-l="limitations"></h3><div id="limitations"></div></div></div></details>
-<details class="chart-section"><summary data-l="overview"></summary><p class="section-note" data-l="count_basis"></p><div class="grid"><div class="panel"><h3 data-l="by_severity"></h3><div id="c-sev"></div></div><div class="panel"><h3 data-l="by_category"></h3><div id="c-cat"></div></div><div class="panel"><h3 data-l="by_status"></h3><div id="c-status"></div></div></div></details>
 <section id="findings" tabindex="-1" aria-labelledby="findings-heading"><div class="section-head"><div><h2 id="findings-heading" data-l="register"></h2><p data-l="register_note"></p></div></div>
 <div class="panel filters-panel"><div class="filters">
 <label><span data-l="filters_record_set"></span><select id="f-scope"></select></label><label><span data-l="severity"></span><select id="f-sev"></select></label><label><span data-l="status"></span><select id="f-status"></select></label><label><span data-l="category"></span><select id="f-cat"></select></label>
 <label class="search"><span data-l="search"></span><input id="f-q" type="search"></label><label><span data-l="sort"></span><select id="f-sort"></select></label>
 </div><div class="filter-bottom"><p class="result-count" id="result-count" aria-live="polite"></p><button id="reset" type="button" data-l="reset"></button></div></div>
 <div class="tablewrap"><table class="register" role="table"><thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">ID</th><th scope="col" role="columnheader" data-l="severity"></th><th scope="col" role="columnheader" data-l="confidence"></th><th scope="col" role="columnheader" data-l="status"></th><th scope="col" role="columnheader" data-l="verdict"></th><th scope="col" role="columnheader" data-l="title_col"></th><th scope="col" role="columnheader" data-l="category"></th></tr></thead><tbody id="rows" role="rowgroup"></tbody></table></div></section>
+<section id="overview" tabindex="-1" aria-labelledby="h">
+<div class="hero"><div><div class="eyebrow" data-l="dashboard_title"></div><h2 id="h" data-l="summary"></h2><div class="meta" id="meta"></div></div></div>
+<div class="summary-banner" id="summary"></div>
+<div class="cards" id="cards"></div>
+</section>
+<section id="priority-section" tabindex="-1" aria-labelledby="priority-heading"><div class="section-head"><div><h2 id="priority-heading" data-l="priority"></h2><p data-l="priority_note"></p></div><a href="#findings" data-l="view_all"></a></div><div class="priority-list" id="priority"></div><p class="report-note" id="queue-note"></p></section>
+<details class="panel coverage" id="coverage" tabindex="-1" open><summary><span data-l="coverage"></span><span class="small" id="coverage-count"></span></summary><p data-l="coverage_note"></p><dl class="scope-meta" id="scope-meta"></dl><div class="coverage-columns"><div id="perspectives"></div><div><h3 data-l="limitations"></h3><div id="limitations"></div></div></div></details>
+<details class="chart-section"><summary data-l="overview"></summary><p class="section-note" data-l="count_basis"></p><div class="grid"><div class="panel"><h3 data-l="by_severity"></h3><div id="c-sev"></div></div><div class="panel"><h3 data-l="by_category"></h3><div id="c-cat"></div></div><div class="panel"><h3 data-l="by_status"></h3><div id="c-status"></div></div></div></details>
 <div class="lists" id="lists" tabindex="-1"></div><footer class="footer" data-l="source_note"></footer>
 <noscript><p>__NOSCRIPT__ <a href="report.html">__REPORT__</a></p></noscript>
 </main>
@@ -601,8 +765,11 @@ def _finding_payload(finding, index):
     return payload
 
 
-def render_dashboard(data, lang):
-    """The interactive dashboard (dashboard.html): self-contained, offline, light and dark themes."""
+def render_dashboard(data, lang, console):
+    """The interactive dashboard (dashboard.html): self-contained, offline, light and dark themes.
+
+    console is the scan's console_model(), drawn above the register by console.js.
+    """
     validate(data)
     L = labels_for(data, lang)
     payload = {
@@ -612,11 +779,14 @@ def render_dashboard(data, lang):
         "order": {"severity": SEVERITIES, "status": STATUSES},
         "perspectives": [{k: p[k] for k in ("name", "result", "note") if k in p} for p in data.get("perspectives", [])],
         **{k: data.get(k, []) for k in LIST_KEYS},
+        "console": console,
     }
     # Escape every less-than sign: <!-- and <script also change HTML parsing.
     blob = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c")
     replacements = {"__LANG__": esc(lang), "__TITLE__": esc(f"{L['dashboard_title']} - {data['meta']['project']}"),
                     "__NOSCRIPT__": esc(L["no_script"]), "__REPORT__": esc(L["report_link"]), "__DATA__": blob,
-                    "__CSS__": style.dashboard_css(), "__JS__": style.dashboard_js()}
+                    "__CSS__": style.dashboard_css() + style.console_css(),
+                    # One script element: console.js first, then the page runtime that mounts it.
+                    "__JS__": style.console_js() + style.dashboard_js()}
     # Substitute only template tokens, in one pass, never tokens inside report data.
     return re.sub(r"__(?:LANG|TITLE|NOSCRIPT|REPORT|DATA|CSS|JS)__", lambda mt: replacements[mt.group(0)], DASHBOARD)

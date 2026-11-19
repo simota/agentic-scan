@@ -17,6 +17,7 @@ import argparse
 from base64 import b64encode
 from hashlib import sha256
 from html import escape
+import json
 from pathlib import Path
 import re
 import sys
@@ -25,7 +26,7 @@ from urllib.parse import quote, urlsplit
 # Importing the local helpers must not write bytecode into the skill tree.
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (CONFIDENCES, PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
+from findings import (CONFIDENCES, EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
                       SchemaError, prepare_cli, read_json, record_problems, validate)
 from findings import commitment_citations, counts as record_counts, excluded as is_excluded  # noqa: E402
 from findings import element_citations, recipients  # noqa: E402
@@ -36,7 +37,7 @@ import report_style  # noqa: E402
 LABELS = {
     "en": {
         "title": "Privacy assessment", "scope": "Scope and method",
-        "brand": "privacy-scan", "theme": "Theme",
+        "brand": "privacy-scan", "theme": "Toggle color theme",
         "findings": "Findings", "commitments": "Privacy commitments", "perspectives": "Perspective coverage",
         "checked_ok": "Checked and sound", "limitations": "What could not be checked",
         "decisions": "Decisions for a human", "next_steps": "Next steps", "excluded": "Excluded",
@@ -93,10 +94,29 @@ LABELS = {
         "sensitive": "sensitive",
         "recipients": "Who receives personal data",
         "recipient_columns": ("Recipient", "Elements received"),
+        "cx_readout": "Record status",
+        "cx_readout_open": "open", "cx_readout_closed": "closed", "cx_readout_excluded": "excluded",
+        "cx_severity_h": "Severity", "cx_severity_note": "{n} included records; {x} excluded are not counted",
+        "cx_tile_sub": "open {open} · closed {closed}", "cx_legend_cell": "1 cell = 1 record.",
+        "cx_legend_open": "open", "cx_legend_closed": "fixed or accepted",
+        "cx_verdict_h": "Verdict", "cx_verdict_note": "all {n} records; excluded verdicts kept as their own block",
+        "cx_perspective_h": "Perspectives", "cx_perspective_note": "{n} perspectives",
+        "cx_perspectives_empty": "No perspectives recorded.",
+        "cx_board_h": "Triage", "cx_board_note": "every record in one lane; pick a card to inspect it",
+        "cx_lane_empty": "None", "cx_inspector_h": "Inspector", "cx_inspector_empty": "No records to inspect.",
+        "cx_open_record": "Open in register",
+        "cx_where_h": "Where", "cx_evidence_h": "Evidence", "cx_evidence_method": "method: {method}",
+        "cx_fix_h": "Fix direction", "cx_empty_records": "No records.", "cx_read_only": "read-only",
+        "cx_evidence_missing": "No evidence recorded.", "cx_fix_missing": "No fix direction recorded.",
+        "cx_not_recorded": "Not recorded.",
+        "cx_lane_open": "OPEN", "cx_lane_closed": "CLOSED", "cx_lane_excluded": "EXCLUDED",
+        "cx_lane_note_open": "Open findings in the recorded order.",
+        "cx_lane_note_closed": "Fix recorded or risk accepted.",
+        "cx_lane_note_excluded": "False positive or not applicable; kept with the justification.",
     },
     "ja": {
         "title": "プライバシー診断", "scope": "対象と方法",
-        "brand": "privacy-scan", "theme": "表示切替",
+        "brand": "privacy-scan", "theme": "配色を切り替え",
         "findings": "検出事項", "commitments": "プライバシー上の約束", "perspectives": "観点のカバレッジ",
         "checked_ok": "確認して問題なかった項目", "limitations": "確認できなかったこと",
         "decisions": "人が判断すべき事項", "next_steps": "次の作業", "excluded": "除外",
@@ -167,6 +187,25 @@ LABELS = {
         "sensitive": "機微",
         "recipients": "個人データの受領者",
         "recipient_columns": ("受領者", "受け取る要素"),
+        "cx_readout": "対応状況",
+        "cx_readout_open": "open", "cx_readout_closed": "closed", "cx_readout_excluded": "excluded",
+        "cx_severity_h": "Severity", "cx_severity_note": "集計対象 {n} 件（除外 {x} 件は数えない）",
+        "cx_tile_sub": "未解決 {open} · 対応済 {closed}", "cx_legend_cell": "1 マス = 1 件。",
+        "cx_legend_open": "未解決", "cx_legend_closed": "対応済み（Fixed / Accepted）",
+        "cx_verdict_h": "Verdict", "cx_verdict_note": "記録 {n} 件の判定。除外の判定は独立した区画",
+        "cx_perspective_h": "Perspectives", "cx_perspective_note": "観点 {n}",
+        "cx_perspectives_empty": "観点の記録がありません。",
+        "cx_board_h": "Triage", "cx_board_note": "全件をいずれかのレーンに置いています。カードを選ぶと詳細を表示します",
+        "cx_lane_empty": "該当なし", "cx_inspector_h": "Inspector", "cx_inspector_empty": "表示できる記録がありません。",
+        "cx_open_record": "一覧で開く",
+        "cx_where_h": "該当箇所", "cx_evidence_h": "根拠", "cx_evidence_method": "method: {method}",
+        "cx_fix_h": "修正方針", "cx_empty_records": "記録がありません。", "cx_read_only": "read-only",
+        "cx_evidence_missing": "根拠は記録されていません。", "cx_fix_missing": "修正方針は記録されていません。",
+        "cx_not_recorded": "記録なし。",
+        "cx_lane_open": "OPEN / 未解決", "cx_lane_closed": "CLOSED / 対応済・受容", "cx_lane_excluded": "EXCLUDED / 誤検知・除外",
+        "cx_lane_note_open": "未対応の検出事項（記録順）",
+        "cx_lane_note_closed": "修正済み（Fixed）または受容（Accepted）",
+        "cx_lane_note_excluded": "誤検知・対象外として根拠つきで保持",
     },
 }
 FIELDS = ("location", "data", "elements", "subjects", "flow", "contrast", "impact", "conditions",
@@ -559,7 +598,7 @@ details[data-sev] summary .muted{font-family:var(--sans);font-size:12px;font-wei
 details[data-sev] dl{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 18px;margin:14px 0 4px}
 details[data-sev] dt{font-family:var(--sans);font-size:12px;color:var(--muted)}
 dd{margin:0;overflow-wrap:anywhere;white-space:pre-line}
-details[data-sev] summary,.hero h1,.hero .meta,.footer{white-space:pre-line}
+details[data-sev] summary,.hero h1,.hero h2,.hero .meta,.footer,.cx-band h1{white-space:pre-line}
 li{white-space:pre-line}
 td{white-space:pre-line}
 details[data-sev] .snippet{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -613,13 +652,13 @@ background:var(--panel);color:var(--text);border:1px solid var(--line);border-ra
 .datamap td:nth-child(6),.datamap td:nth-child(7),.datamap td:nth-child(5){grid-column:1/-1}
 .recipients td:nth-child(1),.recipients td:nth-child(2){grid-column:1/-1}}
 """
-CSS = report_style.dashboard_css() + DASHBOARD_CSS
+CSS = report_style.dashboard_css() + DASHBOARD_CSS + report_style.console_css()
 
 # The theme choice is a per-viewer convenience, stored under the bundled
 # report kit's key with the kit's behaviour. Storage may be absent or
 # throw; the page then follows the system theme.
 THEME_KEY = "scan-report-kit.theme"
-JS = """
+PAGE_JS = """
 try{const t=localStorage.getItem('%s');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}
 document.getElementById('theme').addEventListener('click',()=>{const root=document.documentElement,
 dark=root.dataset.theme?root.dataset.theme==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -633,7 +672,141 @@ if(count)count.textContent=count.dataset.template.replace('{shown}',shown).repla
 document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{
 sev=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));apply();}));
 if(search)search.addEventListener('input',()=>{q=search.value.trim().toLowerCase();apply();});
+const dataEl=document.getElementById('data');
+if(dataEl&&window.AgenticConsole){const D=JSON.parse(dataEl.textContent);if(D.console)window.AgenticConsole.mount(D.console,{root:document});}
+const openHash=()=>{const id=location.hash.slice(1);if(!id)return;const target=document.getElementById(id);
+const det=target&&target.closest('details[data-sev]');if(!det)return;
+if(det.hidden){sev='all';q='';if(search)search.value='';
+document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x.dataset.filter==='all'));apply();}
+det.open=true;det.scrollIntoView({block:'start'});};
+document.addEventListener('click',e=>{const a=e.target.closest('a[href^="#finding-"]');
+if(a&&a.getAttribute('href')===location.hash){e.preventDefault();openHash();}});
+window.addEventListener('hashchange',openHash);
+if(location.hash)openHash();
 """ % (THEME_KEY, THEME_KEY)
+JS = report_style.console_js() + "\n" + PAGE_JS
+
+LANES = ("open", "closed", "excluded")
+LANE_TONES = {"open": "high", "closed": "low", "excluded": "accent"}
+VERDICT_TONES = {"Valid": "strong", "Likely": "mid", "Unverified": "hatch", "Unlikely": "weak"}
+SEVERITY_TONES = {"High": "high", "Medium": "medium", "Low": "low", "Info": "info"}
+
+
+def finding_anchor(finding):
+    return f"finding-{finding['id']}"
+
+
+def console_lane(finding):
+    """The lane of one record: excluded verdicts, then closed statuses, else open."""
+    if is_excluded(finding):
+        return "excluded"
+    if finding.get("status", "Open") != "Open":
+        return "closed"
+    return "open"
+
+
+def console_model(doc, lang):
+    """The normalized console model (artifacts/report-style/console/INTEGRATION.md)."""
+    t = LABELS[lang]
+    meta, raw_findings = doc["meta"], doc.get("findings", [])
+    findings, lanes = [], {}
+    where_keys = (
+        ("location", True), ("data", False), ("elements", True), ("subjects", False),
+        ("flow", False), ("contrast", False), ("impact", False), ("conditions", False),
+        ("commitment", True), ("guard", False),
+    )
+    for f in raw_findings:
+        lane = console_lane(f)
+        lanes[f["id"]] = lane
+        excluded_item = lane == "excluded"
+        v = f["validation"]
+        notes = []
+        if "analysis" in f:
+            a = f["analysis"]
+            notes.append(f"{t['analysis']}: {as_text(a['result'])} ({as_text(a['tool'])}: {as_text(a['command'])})")
+        status = f.get("status", "Open")
+        findings.append({
+            "id": f["id"], "severity": f["severity"], "status": status,
+            "status_label": t["excluded"] if excluded_item else term(t, status),
+            "verdict": v["verdict"], "title": as_text(f["title"]), "location": as_text(f["location"]),
+            "lane": lane, "open": lane == "open", "excluded": excluded_item,
+            "anchor": finding_anchor(f),
+            "tags": [f["confidence"], perspective_name(t, f["category"])],
+            "where": [
+                {"label": t[key], "value": as_text(f[key]), **({"mono": True} if mono else {})}
+                for key, mono in where_keys if key in f and shown(f[key])
+            ],
+            "evidence": {"text": as_text(v.get("evidence", "")), "method": v.get("method", ""), "notes": notes},
+            "fix": as_text(f.get("fix", "")),
+            "guidance": "",
+        })
+    by_category = {}
+    for f in raw_findings:
+        by_category.setdefault(f["category"], []).append(f)
+    recorded = {p["name"]: p for p in doc.get("perspectives", [])}
+    perspectives = []
+    for name in PERSPECTIVES:
+        rec = recorded.get(name, {})
+        matched = by_category.get(name, [])
+        opened = [f for f in matched if lanes[f["id"]] == "open"]
+        if opened:
+            tone = SEVERITY_TONES[min((f["severity"] for f in opened), key=SEVERITIES.index)]
+        elif any(lanes[f["id"]] == "closed" for f in matched):
+            tone = "ink"
+        else:
+            tone = "accent" if matched else "muted"
+        entry = {
+            "name": perspective_name(t, name),
+            "result": term(t, rec.get("status", "—")),
+            "tone": tone,
+            "on": bool(opened),
+        }
+        if shown(rec.get("note", "")):
+            entry["note"] = as_text(rec["note"])
+        perspectives.append(entry)
+    labels = {key[3:]: value for key, value in t.items() if key.startswith("cx_")}
+    labels["location"] = t["location"]
+    open_count = sum(1 for f in findings if f["lane"] == "open")
+    closed_count = sum(1 for f in findings if f["lane"] == "closed")
+    excluded_count = sum(1 for f in findings if f["lane"] == "excluded")
+    return {
+        "meta": {
+            "skill": "privacy-scan",
+            "title": as_text(meta.get("project", "")),
+            "title_id": "cx-title",
+            "context": [
+                as_text(meta.get("date", "")),
+                as_text(meta.get("commit", "")),
+                as_text(meta.get("scope", "")),
+                t["cx_read_only"],
+            ],
+            "headline": "",
+        },
+        "counts": {"open": open_count, "closed": closed_count, "excluded": excluded_count, "total": len(findings)},
+        "severities": list(SEVERITIES),
+        "verdicts": [
+            {"key": v, "label": v, "excluded": v in EXCLUDED,
+             **({"tone": VERDICT_TONES[v]} if v in VERDICT_TONES else {})}
+            for v in VERDICTS
+        ],
+        "lanes": [
+            {"key": key, "label": t["cx_lane_" + key], "note": t["cx_lane_note_" + key], "tone": LANE_TONES[key]}
+            for key in LANES
+        ],
+        "perspectives": perspectives,
+        "findings": findings,
+        "labels": labels,
+    }
+
+
+def json_for_script(payload):
+    """Serialize JSON for a <script type='application/json'> block without raw HTML tags."""
+    return (json.dumps(payload, ensure_ascii=False)
+            .replace("&", "\\u0026")
+            .replace("<", "\\u003c")
+            .replace(">", "\\u003e")
+            .replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029"))
 
 
 def _csp_source(code):
@@ -679,46 +852,30 @@ def render_html(doc, lang):
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
     method = review_method(meta, findings, t)
+    cm = console_model(doc, lang)
     e = lambda v: escape(as_text(v))  # noqa: E731
     byline = " · ".join(as_text(meta.get(k, "")) for k in ("date", "assessor")
                         if shown(meta.get(k, "")))
-    out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
+    out = [f"<!doctype html><html lang='{lang}' class='app-shell'><head><meta charset='utf-8'>",
            f"<meta http-equiv='Content-Security-Policy' content=\"{CSP}\">",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            # A document title cannot show a break, so its lines are joined visibly.
            f"<title>{e(t['title'])}: {e(as_text(meta.get('project', '')).replace(chr(10), ' · '))}</title>"
-           f"<style>{CSS}</style></head><body><main>",
-           f"<header class='masthead'><span class='brand'>{e(t['brand'])}</span>"
-           f"<div class='tools'><button id='theme' type='button'>{e(t['theme'])}</button></div></header>",
-           f"<div class='hero'><div><div class='eyebrow'>{e(t['title'])}</div>"
-           f"<h1>{e(meta.get('project', ''))}</h1><div class='meta'>{e(byline)}</div></div>"
-           f"<div class='hero-aside'>{e(t['disclaimer'])}</div></div>",
-           "<div class='cards'>"]
-    for s in SEVERITIES:
-        out.append(f"<div class='card'><span class='l'><span class='badge {s}'>{s}</span></span>"
-                   f"<div class='n'>{by_sev[s]}</div></div>")
-    out.append(f"<div class='card'><span class='l'>{e(t['excluded'])}</span>"
-               f"<div class='n'>{excluded}</div></div></div>")
-    out.append(f"<div class='summary-banner'><p><strong>{e(t['verdict_counts'])}:</strong> "
-               f"{e(verdict_summary(findings))}</p></div>")
-    scope_rows = [(t['project'], meta.get('project', '')),
-                  (t['scope_row'], meta.get('scope', '')),
-                  (t['revision'], revision(meta)),
-                  *axis_rows(meta, t),
-                  (t['review_method'], method),
-                  (t['date'], f"{meta.get('date', '')} / {meta.get('assessor', '')}")]
-    out.append(f"<section class='panel'><h2>{e(t['scope'])}</h2><dl class='scope-meta'>"
-               + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in scope_rows)
-               + "</dl></section>")
-    severity_rows, confidence_rows, closing = legend(meta, t)
-    out.append(f"<section class='panel' id='levels'><h2>{e(t['legend']['title'])}</h2>"
-               f"<h3>{e(t['legend']['severity'])}</h3><dl class='scope-meta'>"
-               + "".join(f"<dt><span class='badge {s}'>{s}</span></dt><dd>{e(text)}</dd>"
-                         for s, text in severity_rows)
-               + f"</dl><h3>{e(t['legend']['confidence'])}</h3><dl class='scope-meta'>"
-               + "".join(f"<dt>{e(c)}</dt><dd>{e(text)}</dd>" for c, text in confidence_rows)
-               + "</dl>" + "".join(f"<p class='muted'>{e(line)}</p>" for line in closing)
-               + "</section>")
+           f"<style>{CSS}</style></head><body>",
+           "<header class='cx-band'><div class='cx-band-in'><div data-cx='ident'></div>"
+           "<div class='cx-side'><dl class='cx-readout' data-cx='readout'></dl>"
+           f"<div class='cx-tools'><button id='theme' type='button'>{e(t['theme'])}</button></div>"
+           "</div></div></header>",
+           "<div class='cx' id='console'><div class='cx-grid'>"
+           "<section class='cx-p cx-sev' data-cx='severity' aria-labelledby='cx-sev-h'></section>"
+           "<section class='cx-p cx-ver' data-cx='verdicts' aria-labelledby='cx-ver-h'></section>"
+           "<section class='cx-p cx-cov' data-cx='perspectives' aria-labelledby='cx-cov-h'></section>"
+           f"<section class='cx-triage' id='triage' tabindex='-1' aria-labelledby='cx-triage-h'>"
+           f"<h2 class='cx-ph' id='cx-triage-h'><b>{e(t['cx_board_h'])}</b>"
+           f"<span>{e(t['cx_board_note'])}</span></h2>"
+           "<div class='cx-triage-in'><div class='cx-board' data-cx='board'></div>"
+           "<aside class='cx-insp' data-cx='inspector' aria-live='polite'></aside>"
+           "</div></section></div></div><main>"]
 
     def filter_button(key, label, n, pressed=False):
         # The count tells what a filter will show before it is pressed.
@@ -758,7 +915,7 @@ def render_html(doc, lang):
         # Excluded findings are not counted under their severity, so they are
         # filtered separately and labelled in the summary as well.
         out.append(f"<details data-sev='{'excluded' if excluded_finding else f['severity']}'>"
-                   f"<summary><span class='badge {f['severity']}'>"
+                   f"<summary id='{e(finding_anchor(f))}'><span class='badge {f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
                    f"· {e(v['verdict'])}"
                    + (f" ({e(t['excluded'])})" if excluded_finding else "")
@@ -771,6 +928,35 @@ def render_html(doc, lang):
                              for ref in f.get("references", []))
                    + "</dl></details>")
     out.append("</div></section>")
+    out.append(f"<section id='overview'><div class='hero'><div><div class='eyebrow'>{e(t['title'])}</div>"
+               f"<h2>{e(meta.get('project', ''))}</h2><div class='meta'>{e(byline)}</div></div>"
+               f"<div class='hero-aside'>{e(t['disclaimer'])}</div></div>"
+               "<div class='cards'>")
+    for s in SEVERITIES:
+        out.append(f"<div class='card'><span class='l'><span class='badge {s}'>{s}</span></span>"
+                   f"<div class='n'>{by_sev[s]}</div></div>")
+    out.append(f"<div class='card'><span class='l'>{e(t['excluded'])}</span>"
+               f"<div class='n'>{excluded}</div></div></div>")
+    out.append(f"<div class='summary-banner'><p><strong>{e(t['verdict_counts'])}:</strong> "
+               f"{e(verdict_summary(findings))}</p></div></section>")
+    scope_rows = [(t['project'], meta.get('project', '')),
+                  (t['scope_row'], meta.get('scope', '')),
+                  (t['revision'], revision(meta)),
+                  *axis_rows(meta, t),
+                  (t['review_method'], method),
+                  (t['date'], f"{meta.get('date', '')} / {meta.get('assessor', '')}")]
+    out.append(f"<section class='panel'><h2>{e(t['scope'])}</h2><dl class='scope-meta'>"
+               + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in scope_rows)
+               + "</dl></section>")
+    severity_rows, confidence_rows, closing = legend(meta, t)
+    out.append(f"<section class='panel' id='levels'><h2>{e(t['legend']['title'])}</h2>"
+               f"<h3>{e(t['legend']['severity'])}</h3><dl class='scope-meta'>"
+               + "".join(f"<dt><span class='badge {s}'>{s}</span></dt><dd>{e(text)}</dd>"
+                         for s, text in severity_rows)
+               + f"</dl><h3>{e(t['legend']['confidence'])}</h3><dl class='scope-meta'>"
+               + "".join(f"<dt>{e(c)}</dt><dd>{e(text)}</dd>" for c, text in confidence_rows)
+               + "</dl>" + "".join(f"<p class='muted'>{e(line)}</p>" for line in closing)
+               + "</section>")
     if not doc.get("commitments"):
         out.append(f"<section><div class='section-head'><div><h2>{e(t['commitments'])}</h2></div></div>"
                    f"<p class='muted'>{e(t['none'])}</p></section>")
@@ -821,7 +1007,8 @@ def render_html(doc, lang):
                    + "</section>")
     out.append(f"</div><footer class='footer'>{e(t['title'])}: {e(meta.get('project', ''))}"
                f" · {e(t['revision'])} {e(revision(meta))}</footer>")
-    out.append(f"</main><script>{JS}</script></body></html>")
+    out.append(f"</main><script id='data' type='application/json'>{json_for_script({'console': cm})}</script>"
+               f"<script>{JS}</script></body></html>")
     return "".join(out)
 
 

@@ -711,9 +711,8 @@ class BrowserTest(unittest.TestCase):
                         self.assertEqual(reached["focus"], "finding-f-003", how)
                         self.assertGreaterEqual(reached["top"], reached["pinned"], (how, reached))
 
-    def test_without_javascript_the_column_heads_pin_under_the_app_bar(self):
-        # The filter bar needs the script, so without it nothing sits between
-        # the app bar and the pinned column heads for findings to show through.
+    def test_without_javascript_the_column_heads_pin_to_the_viewport(self):
+        # With the filter bar hidden, the column heads pin to the top of the viewport.
         with tempfile.TemporaryDirectory() as tmp:
             page = Path(tmp) / "dashboard.html"
             page.write_text(render.render_html(sample(), "en"), encoding="utf-8")
@@ -722,7 +721,7 @@ class BrowserTest(unittest.TestCase):
                                     capture_output=True, text=True, timeout=120)
         out = json.loads(result.stdout.strip().splitlines()[-1])
         self.assertNotIn("crash", out, out.get("crash"))
-        self.assertLessEqual(abs(out["head"] - out["appbar"]), 2, out)
+        self.assertLessEqual(abs(out["head"]), 2, out)
 
 
 # A finding reached by a link, then by `k` from the one after it: where its
@@ -740,7 +739,7 @@ const [file, width] = process.argv.slice(1);
     const a = document.activeElement, f = a.closest('.finding');
     return { focus: f ? f.id : null,
              top: Math.round(document.querySelector('#finding-f-003 summary').getBoundingClientRect().top),
-             pinned: Math.round(Math.max(bottom('.appbar'), bottom('.filters-panel'), bottom('.reg-head'))) };
+             pinned: Math.round(Math.max(bottom('.filters-panel'), bottom('.reg-head'))) };
   });
   await page.goto('file://' + file + '#finding-f-003', { waitUntil: 'load' });
   await page.waitForTimeout(1000);  // the kit scrolls smoothly
@@ -771,7 +770,6 @@ const [file] = process.argv.slice(1);
   await page.goto('file://' + file + '#finding-f-004', { waitUntil: 'load' });
   await page.waitForTimeout(1000);
   console.log(JSON.stringify(await page.evaluate(() => ({
-    appbar: Math.round(document.querySelector('.appbar').getBoundingClientRect().bottom),
     head: Math.round(document.querySelector('.reg-head').getBoundingClientRect().top) }))));
   await browser.close();
 })().catch(e => { console.log(JSON.stringify({ crash: String(e) })); process.exit(1); });
@@ -1500,8 +1498,8 @@ class DashboardContentTest(unittest.TestCase):
         doc = sample()
         html = self.html(doc)
         links = re.findall(r"<li><a href=\"#([a-z-]+)\">", html.split("</nav>")[0])
-        self.assertEqual(links, ["overview", "priority-section", "decisions-section", "coverage",
-                                 "levels", "plan", "rules", "charts", "findings", "lists"])
+        self.assertEqual(links, ["triage", "findings", "overview", "priority-section", "decisions-section", "coverage",
+                                 "levels", "plan", "rules", "charts", "lists"])
         for target in links:
             self.assertEqual(html.count(f"id='{target}'"), 1, target)
         doc["conventions"] = []
@@ -1811,9 +1809,9 @@ class JapaneseWordingTest(unittest.TestCase):
         html = render.render_html(sample(), "ja")
         self.assertIn("<span class='l'>未対応の <span lang='en'>High</span>", html)
 
-    def test_the_brand_is_marked_english(self):
+    def test_the_console_band_hosts_the_brand(self):
         html = render.render_html(sample(), "ja")
-        self.assertIn("<span class='brand'><span lang='en'>TEST SUITE REVIEW</span>", html)
+        self.assertIn("<header class='cx-band'><div class='cx-band-in'><div data-cx='ident'>", html)
 
     def test_latin_words_are_spaced_from_japanese(self):
         # "・" joins listed English values and is the one exception.
@@ -1976,7 +1974,8 @@ class RenderedContentTest(unittest.TestCase):
 
     def test_csp_pins_the_script_by_hash(self):
         html = render.render_html(sample(), "en")
-        self.assertIn(f"script-src {render.csp_hash(render.JS)}", html)
+        script = re.search(r"<script>(.*?)</script>", html, re.S)[1]
+        self.assertIn(f"script-src {render.csp_hash(script)}", html)
         self.assertNotIn("unsafe-inline", html)
 
     def test_links_refuse_unc_paths_and_bidi_controls(self):

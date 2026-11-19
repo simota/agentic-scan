@@ -14,7 +14,10 @@ try:
 except ImportError:
     resource = None
 
-from support import OUTPUTS, SKILL, complete_doc, render, run_cli, run_main
+from support import OUTPUTS as LEGACY_OUTPUTS, SKILL, complete_doc, render, run_cli, run_main
+
+
+OUTPUTS = (*LEGACY_OUTPUTS, "assessment.html")
 
 
 class AtomicRenderTests(unittest.TestCase):
@@ -119,7 +122,7 @@ class AtomicRenderTests(unittest.TestCase):
 
     def test_interrupt_after_publish_restores_existing_or_absent_outputs(self):
         for existing in (True, False):
-            for interrupt_after in (1, 2):
+            for interrupt_after in range(1, len(OUTPUTS) + 1):
                 with self.subTest(existing=existing, interrupt_after=interrupt_after), \
                         tempfile.TemporaryDirectory() as d:
                     source, out, _ = self.prepare(Path(d), existing)
@@ -155,7 +158,7 @@ class AtomicRenderTests(unittest.TestCase):
     def test_success_preserves_existing_output_permissions(self):
         with tempfile.TemporaryDirectory() as d:
             source, out, _ = self.prepare(Path(d))
-            modes = {"report.md": 0o640, "dashboard.html": 0o600}
+            modes = {"report.md": 0o640, "dashboard.html": 0o600, "assessment.html": 0o640}
             for name, mode in modes.items():
                 (out / name).chmod(mode)
             result, errors = self.run_render(source, out)

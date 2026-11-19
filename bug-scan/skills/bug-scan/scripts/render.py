@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import diagrams  # noqa: E402
-from common import RecordError, as_list, closed, excluded, load_json, pattern_name  # noqa: E402
+from common import EXCLUDED, VERDICTS, RecordError, as_list, closed, excluded, load_json, pattern_name  # noqa: E402
 from findings import reference_errors, shape_errors  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 
@@ -157,6 +157,20 @@ def insert_before(html, anchor, addition):
     return html[:index] + addition + html[index:]
 
 
+def console_model(record, common, lang):
+    details = {}
+    for finding in record.get("findings", []):
+        validation = finding.get("validation") or {}
+        pattern = finding.get("pattern")
+        details[finding["id"]] = dict(
+            status=finding["status"], fix=finding.get("fix", ""),
+            perspective=f"{pattern} {pattern_name(pattern, lang)}" if pattern else "",
+            evidence=dict(text=validation.get("evidence", ""), method=validation.get("method", "")),
+        )
+    return report.console_model(common, lang, skill="bug-scan", details=details, verdicts=VERDICTS,
+                                excluded_verdicts=EXCLUDED)
+
+
 def build(record, surfaces, history, lang):
     """Return (dashboard, report) as text. Deterministic, so the contract can compare a fresh render."""
     errors = shape_errors(record) or reference_errors(record)
@@ -165,16 +179,15 @@ def build(record, surfaces, history, lang):
     if not record.get("meta", {}).get("project") or not record.get("meta", {}).get("date"):
         raise RecordError("meta.project and meta.date are required to render")
     common = report.validate(to_common(record, surfaces, lang))
+    console = console_model(record, common, lang)
     figs = diagrams.figures(record, surfaces, history, lang)
     t = TEXT[lang]
-    dashboard = report.render_dashboard(common, lang)
-    dashboard = insert_before(dashboard, "</head>", f"<style>{diagrams.dashboard_css()}</style>")
+    dashboard = report.render_dashboard(common, lang, console=console, extra_css=diagrams.dashboard_css())
     # The register leads the dashboard (docs/plans/bug-scan-design.md); contents follow page order, which the kit's scroll spy relies on.
     dashboard = insert_before(dashboard, '<div class="lists"', diagrams.section_html(figs, lang, printable=False))
     dashboard = insert_before(dashboard, '<li><a href="#lists"', f'<li><a href="#figures">{diagrams.e(t["figures"])}</a></li>')
     dashboard = insert_before(dashboard, "</body>", f'<div id="bs-tip" aria-hidden="true"></div><script>{diagrams.SCRIPT}</script>')
-    document = report.render_document(common, lang)
-    document = insert_before(document, "</head>", f"<style>{diagrams.document_css()}</style>")
+    document = report.render_document(common, lang, console=console, extra_css=diagrams.document_css())
     document = insert_before(document, '<section id="finding-register"', diagrams.section_html(figs, lang, printable=True))
     return dashboard, document
 

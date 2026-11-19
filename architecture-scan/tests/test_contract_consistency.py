@@ -186,9 +186,10 @@ class RenderConsistencyTests(unittest.TestCase):
         for lang in ("en", "ja"):
             with self.subTest(lang=lang):
                 label = render.LABELS[lang]["category"]
+                name = render.perspective_name("Domain model and data ownership", lang)
                 markdown = render.render_markdown(doc, lang)
-                self.assertIn(f"- **{label}:** Domain model and data ownership (DM1)\n", markdown)
-                self.assertIn(f"- **{label}:** Domain model and data ownership\n", markdown)
+                self.assertIn(f"- **{label}:** {name} (DM1)\n", markdown)
+                self.assertIn(f"- **{label}:** {name}\n", markdown)
                 self.assertIn("(DM1)", render.render_html(doc, lang))
 
     def test_table_headers_are_localized_in_both_outputs(self):

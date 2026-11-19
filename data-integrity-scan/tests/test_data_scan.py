@@ -1632,6 +1632,46 @@ class ReportStructureTest(unittest.TestCase):
 class RenderCliTest(Run):
     """render.py exit codes: 0 written, 1 write failed, 2 bad record or command line."""
 
+    def test_japanese_demo_localizes_every_perspective(self):
+        target = SAMPLE.with_name("findings.sample.ja.json")
+        original = target.read_bytes()
+        for override in ((), ("--lang", "ja")):
+            with self.subTest(override=override):
+                result = run_script("render.py", target, "--out", self.out, *override)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                html = (self.out / "dashboard.html").read_text(encoding="utf-8")
+                report = (self.out / "report.md").read_text(encoding="utf-8")
+                console = json.loads(re.search(r"id='console-data'>(.*?)</script>", html)[1])
+                copied = json.loads(re.search(r"id='copy-data'>(.*?)</script>", html)[1])
+                visible = re.sub(r"<[^>]+>", "", re.sub(r"<script\b.*?</script>", "", html, flags=re.S))
+                for english, japanese in render.PERSPECTIVE_NAMES_JA.items():
+                    self.assertIn(f"<td>{japanese}</td><td>適用</td>", html)
+                    self.assertIn(f"| {japanese} | 適用 |", report)
+                    for output in (visible, report, str(console), str(copied)):
+                        self.assertNotIn(english, output)
+                self.assertEqual([(p["name"], p["result"]) for p in console["perspectives"]],
+                                 [(render.PERSPECTIVE_NAMES_JA[name], "適用") for name in findings.PERSPECTIVES])
+        self.assertEqual(target.read_bytes(), original)
+
+    def test_perspective_labels_cover_the_schema_and_keep_english_labels(self):
+        self.assertEqual(set(render.PERSPECTIVE_NAMES_JA), set(findings.PERSPECTIVES))
+        self.assertEqual(set(render.PERSPECTIVE_STATUSES_JA), set(findings.PERSPECTIVE_STATUSES))
+        doc = sample()
+        doc["perspectives"][0]["status"] = "not checked"
+        doc["perspectives"][1]["status"] = "N/A"
+        for lang, expected in (("ja", ("未確認", "該当なし", "適用")),
+                               ("en", ("not checked", "N/A", "applied"))):
+            with self.subTest(lang=lang):
+                html = render.render_html(doc, lang)
+                report = render.render_markdown(doc, lang)
+                lamps = render.console_model(doc, lang)["perspectives"]
+                self.assertEqual([p["result"] for p in lamps[:3]], list(expected))
+                for name, lamp, status in zip(findings.PERSPECTIVES, lamps, expected):
+                    label = render.PERSPECTIVE_NAMES_JA[name] if lang == "ja" else name
+                    self.assertEqual(lamp["name"], label)
+                    self.assertIn(f"<td>{label}</td><td>{status}</td>", html)
+                    self.assertIn(f"| {label} | {status} |", report)
+
     def test_exit_codes_and_lang_override(self):
         target = self.out / "findings.json"
         target.write_bytes(SAMPLE.read_bytes())
@@ -1781,8 +1821,7 @@ class AccessibilityTest(unittest.TestCase):
         self.assertIn("<span class='badge High' lang='en'>High</span>", html)
         self.assertIn("<span class='t' lang='en'>Staged</span>", html)  # charts
         self.assertIn("<div class='verdict' lang='en'>", html)  # priority cards
-        # perspectives table, data rule ledger status, finding details
-        self.assertIn("<td lang='en'>Schema constraints</td><td lang='en'>applied</td>", html)
+        # Data rule ledger status and finding details.
         self.assertIn("<td><span lang='en'>drifted</span></td>", html)  # a reason may follow
         self.assertIn("<dd><span lang='en'>Valid (static)</span></dd>", html)
         self.assertIn("<dd><span lang='en'>Add Foreign Key</span></dd>", html)
@@ -1983,7 +2022,7 @@ class RenderedContentTest(unittest.TestCase):
             report = render.render_markdown(doc, lang)
             self.assertIn(f"| {t['window']} | {render.markdown_inline(doc['meta']['window'])} |",
                           report)
-            self.assertIn("Schema constraints (SC2)", report)
+            self.assertIn("スキーマ制約 (SC2)" if lang == "ja" else "Schema constraints (SC2)", report)
             self.assertIn("C-01 · TYPES", report)
             self.assertIn(f"({t['inferred']})", report)
             self.assertIn(f"- **{t['analysis']}:** CC 41", report)

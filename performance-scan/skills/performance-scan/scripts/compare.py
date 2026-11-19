@@ -51,7 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, FINDING_MENTION, LOCATION, SEVERITIES,  # noqa: E402
                       SchemaError, escape_unencodable_console, finding_locations,
                       finding_status, read_json, resolve_path, validate, write_atomic)
-from render import markdown_cell, markdown_text  # noqa: E402
+from render import markdown_cell, markdown_text, perspective_name, shown  # noqa: E402
 
 # Two findings of one category are the same root cause when they share a file
 # or, failing that, when their titles are this similar.
@@ -453,16 +453,20 @@ def gate(result, threshold):
     return sorted(e["current_id"] for e in tripped)
 
 
-def reason_text(reason, t):
+def reason_text(reason, t, lang):
     if not reason:
         return ""
     template = t[f"reason_{reason['kind']}"]
-    return template.format(**{k: v for k, v in reason.items() if k != "kind"})
+    values = {k: v for k, v in reason.items() if k != "kind"}
+    if reason["kind"] == "unchecked":
+        values["category"] = perspective_name(values["category"], lang)
+        values["status"] = shown(values["status"], lang)
+    return template.format(**values)
 
 
-def change_text(entry, t):
+def change_text(entry, t, lang):
     if entry["change"] != "persisting":
-        return reason_text(entry.get("reason"), t)
+        return reason_text(entry.get("reason"), t, lang)
     parts = []
     for key, change in entry["changes"].items():
         if key == "files":
@@ -477,12 +481,12 @@ def run_line(run):
     return f"{run['project']} · {commit} · {run['date']} · {run['assessor']}"
 
 
-def finding_rows(entries, t):
+def finding_rows(entries, t, lang):
     headers = (t["change_col"], t["current_id"], t["baseline_id"], t["severity"],
                t["title_col"], t["location"])
     lines = ["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
     for e in entries:
-        cells = (markdown_cell(change_text(e, t)), e["current_id"] or "—",
+        cells = (markdown_cell(change_text(e, t, lang)), e["current_id"] or "—",
                  e["baseline_id"] or "—", e["severity"], markdown_cell(e["title"]),
                  markdown_cell(e["location"]))
         lines.append("| " + " | ".join(cells) + " |")
@@ -510,7 +514,7 @@ def render_markdown(result, lang):
     for key, entries in (("new", f["new"]), ("resolved", f["resolved"]),
                          ("unchecked", f["unchecked"]), ("persisting", f["persisting"])):
         lines += [f"## {t[key]} ({len(entries)})", ""]
-        lines += (finding_rows(entries, t) if entries else [t["none"]]) + [""]
+        lines += (finding_rows(entries, t, lang) if entries else [t["none"]]) + [""]
     lines += [f"## {t['budgets']}", ""]
     if result["budgets"]:
         lines += [f"| {t['id']} | {t['statement']} | {t['from']} | {t['to']} |", "|---|---|---|---|"]
@@ -527,7 +531,8 @@ def render_markdown(result, lang):
     if result["perspectives"]:
         lines += [f"| {t['perspective']} | {t['from']} | {t['to']} |", "|---|---|---|"]
         for p in result["perspectives"]:
-            lines.append(f"| {p['name']} | {p['from'] or '—'} | {p['to'] or '—'} |")
+            lines.append(f"| {perspective_name(p['name'], lang)} | "
+                         f"{shown(p['from'] or '—', lang)} | {shown(p['to'] or '—', lang)} |")
     else:
         lines.append(t["none"])
     if "carry" in result:

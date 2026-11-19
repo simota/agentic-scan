@@ -152,12 +152,30 @@ LABELS = {
 VALUE_LABELS = {
     "ja": {"static": "静的", "measured": "計測", "holds": "維持", "violated": "違反",
            "partly read": "一部のみ確認", "not checked": "未確認", "applied": "適用",
-           "N/A": "対象外", "Open": "未対応", "Fixed": "修正済み", "Accepted": "許容"},
+           "N/A": "該当なし", "Open": "未対応", "Fixed": "修正済み", "Accepted": "許容"},
+}
+PERSPECTIVE_NAMES_JA = {
+    "Database access": "データベースアクセス",
+    "Algorithms and data structures": "アルゴリズムとデータ構造",
+    "Memory": "メモリ使用量",
+    "I/O and network": "入出力とネットワーク",
+    "Caching": "キャッシュ",
+    "Concurrency and resources": "並行処理とリソース",
+    "Payload and API shape": "転送データと API 設計",
+    "Front end": "フロントエンド",
+    "Background work": "バックグラウンド処理",
+    "Startup and configuration": "起動と実行設定",
+    "Dependencies and platform": "依存関係と実行基盤",
+    "Observability": "可観測性",
 }
 
 
 def shown(value, lang):
     return VALUE_LABELS.get(lang, {}).get(value, value)
+
+
+def perspective_name(name, lang):
+    return PERSPECTIVE_NAMES_JA.get(name, name) if lang == "ja" else name
 
 
 FIELDS = ("location", "workload", "scale_driver", "cost_model", "request", "contrast",
@@ -396,7 +414,7 @@ def perspective_rows(doc, lang):
     rows = []
     for name in PERSPECTIVES:
         p = recorded.get(name, {"status": "—", "note": ""})
-        rows.append((name, shown(p["status"], lang), p["note"]))
+        rows.append((perspective_name(name, lang), shown(p["status"], lang), p["note"]))
     return rows
 
 
@@ -424,7 +442,7 @@ def markdown_finding(f, t):
     grade = f"[{v['verdict']}]" if excluded else f"[{f['severity']}][{f['confidence']}]"
     lines = [f"### {f['id']} {grade} {markdown_text(f['title'])}", ""]
     step = f" ({markdown_text(f['step'])})" if f.get("step", "").strip() else ""
-    lines.append(f"- **{t['perspective']}:** {f['category']}{step}")
+    lines.append(f"- **{t['perspective']}:** {perspective_name(f['category'], t['lang'])}{step}")
     for key in FIELDS:
         if key == "location":
             # Code spans keep paths copyable (no snake\_case escapes) and inert.
@@ -690,7 +708,7 @@ def llm_finding(f, t, meta):
     if meta.get("axis") in AXES:
         out.append(f"- {t['axis']}: {t['axis_' + meta['axis']]}")
     out += [f"- {t['severity']}: {f['severity']} · {t['confidence']}: {f['confidence']}",
-            f"- {t['perspective']}: {f['category']}{step}"]
+            f"- {t['perspective']}: {perspective_name(f['category'], lang)}{step}"]
     locations = finding_locations(f)
     if len(locations) == 1:
         out.append(f"- {t['location']}: {llm_line(locations[0])}")
@@ -749,7 +767,8 @@ def html_finding(f, t, meta, assessment=False):
         rows.append((t["environment"], f["measurement"]["environment"]))
     opened = " open" if assessment else ""
     out = [f"<details id='{anchor(f)}' data-sev='{group}'{opened}><summary>{badge} {e(f['id'])} {e(f['title'])} "
-           f"<span class='small'>· {facts}{e(f['confidence'])} · {e(f['category'])}{step}</span></summary>"]
+           f"<span class='small'>· {facts}{e(f['confidence'])} · "
+           f"{e(perspective_name(f['category'], lang))}{step}</span></summary>"]
     if not assessment:
         out.append(f"<div class='detail-actions'><button type='button' class='copy-finding' "
                    f"data-llm='{escape(llm_finding(f, t, meta))}' data-copied='{e(t['copied'])}' "
@@ -842,8 +861,8 @@ def console_model(doc, lang):
         location = "\n".join(finding_locations(f))
         status = finding_status(f)
         excluded = lane == "excluded"
-        values = {"location": location}
-        for key in ("category", "workload", "scale_driver", "request", "impact"):
+        values = {"location": location, "category": perspective_name(f["category"], lang)}
+        for key in ("workload", "scale_driver", "request", "impact"):
             values[key] = f.get(key)
         records.append({
             "id": f["id"], "severity": f["severity"], "status": status,
@@ -860,6 +879,7 @@ def console_model(doc, lang):
         })
     lamps = report_style.perspective_lamps(doc, records, lambda status: shown(status, lang))
     for lamp in lamps:
+        lamp["name"] = perspective_name(lamp["name"], lang)
         lamp["note"] = plain(lamp["note"])
     return {
         "meta": {"skill": "performance-scan", "title": plain(meta.get("project")), "title_id": "cx-title",

@@ -77,7 +77,7 @@ class RenderRegressionTests(unittest.TestCase):
                 self.assertEqual(len(rules[0]), 4)
                 self.assertEqual([plain_cell(cell) for cell in rules[0]], [
                     "R-01", "Created | Deleted\nthen Reviewed",
-                    r"docs\adr\|boundary.md:12", "violated",
+                    r"docs\adr\|boundary.md:12", render.rule_status("violated", lang),
                 ])
                 perspectives = table_rows(markdown, labels["perspectives"])
                 self.assertTrue(all(len(row) == 3 for row in perspectives))
@@ -107,10 +107,11 @@ class RenderRegressionTests(unittest.TestCase):
                 markdown = render.render_markdown(doc, lang)
                 row = table_rows(markdown, render.LABELS[lang]["rules"])[0]
                 self.assertEqual(len(row), 4)
-                self.assertEqual(plain_cell(row[3]), f"not checked\n{label}: {reason}")
+                shown = render.rule_status("not checked", lang)
+                self.assertEqual(plain_cell(row[3]), f"{shown}\n{label}: {reason}")
                 html = render.render_html(doc, lang)
                 html_row = re.search(r"<tr><td class='nowrap'[^>]*>R-01</td>.*?</tr>", html).group(0)
-                self.assertIn(f"not checked\n{label}: {reason}", CellText(html_row).text)
+                self.assertIn(f"{shown}\n{label}: {reason}", CellText(html_row).text)
                 self.assertNotIn("<manifest>", html_row)
 
     def test_escaped_backticks_stay_literal(self):
@@ -129,9 +130,10 @@ class RenderRegressionTests(unittest.TestCase):
             with self.subTest(lang=lang):
                 markdown = render.render_markdown(doc, lang)
                 row = table_rows(markdown, render.LABELS[lang]["rules"])[0]
-                self.assertEqual(row[3], "violated")
+                shown = render.rule_status("violated", lang)
+                self.assertEqual(row[3], shown)
                 html = render.render_html(doc, lang)
-                self.assertRegex(html, r"<td[^>]*><span class='state bad'>violated</span></td></tr>")
+                self.assertRegex(html, rf"<td[^>]*><span class='state bad'>{shown}</span></td></tr>")
 
 
 if __name__ == "__main__":

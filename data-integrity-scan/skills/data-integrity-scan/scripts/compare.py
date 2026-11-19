@@ -61,7 +61,7 @@ from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, SchemaError,  # noqa: 
                       _atomic_write_all, _rewrite_ids, as_locations, cited_conventions,
                       read_json, safe_output, split_location, validate)
 from markdown_safe import as_text, markdown_code, markdown_inline  # noqa: E402
-from render import revision  # noqa: E402
+from render import perspective_name, perspective_status, revision  # noqa: E402
 
 # How close two locations in the same file must be to count as the same place.
 NEAR_LINES = 30
@@ -337,6 +337,8 @@ def as_markdown(result, old_doc, new_doc, lang):
         if reappeared:
             lines.append(f"  - **{w['reappeared']}**")
         for key, a, b in diff:
+            if key == "category":
+                a, b = perspective_name(a, lang), perspective_name(b, lang)
             lines.append(f"  - {w[key]}: {text(a)} → {text(b)}")
         if not diff and not reappeared:
             lines.append(f"  - {w['unchanged']}")
@@ -361,7 +363,9 @@ def as_markdown(result, old_doc, new_doc, lang):
     if not result["rules"]:
         lines.append(w["none"])
     lines += ["", f"## {w['perspectives']}", ""]
-    lines += [f"- {text(name)}: {a} → {b}" for name, a, b in result["perspectives"]] or [w["none"]]
+    lines += [f"- {text(perspective_name(name, lang))}: "
+              f"{perspective_status(a, lang)} → {perspective_status(b, lang)}"
+              for name, a, b in result["perspectives"]] or [w["none"]]
     return "\n".join(lines) + "\n"
 
 

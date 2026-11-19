@@ -57,7 +57,8 @@ sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, SchemaError,  # noqa: E402
                       _rewrite_ids, atomic_write_all, as_locations, cited_rules, read_json,
                       safe_output, split_location, validate, visible)
-from render import as_text, markdown_code, markdown_inline, revision  # noqa: E402
+from render import (as_text, markdown_code, markdown_inline, perspective_name,  # noqa: E402
+                    perspective_status, revision)
 
 # How close two locations in the same file must be to count as the same place.
 NEAR_LINES = 30
@@ -333,6 +334,8 @@ def as_markdown(result, old_doc, new_doc, lang):
         if reappeared:
             lines.append(f"  - **{w['reappeared']}**")
         for key, a, b in diff:
+            if key == "category":
+                a, b = perspective_name(a, lang), perspective_name(b, lang)
             lines.append(f"  - {w[key]}: {text(a)} → {text(b)}")
         if not diff and not reappeared:
             lines.append(f"  - {w['unchanged']}")
@@ -357,7 +360,8 @@ def as_markdown(result, old_doc, new_doc, lang):
     if not result["rules"]:
         lines.append(w["none"])
     lines += ["", f"## {w['perspectives']}", ""]
-    lines += [f"- {text(name)}: {a} → {b}" for name, a, b in result["perspectives"]] or [w["none"]]
+    lines += [f"- {text(perspective_name(name, lang))}: {perspective_status(a, lang)} → "
+              f"{perspective_status(b, lang)}" for name, a, b in result["perspectives"]] or [w["none"]]
     return "\n".join(lines) + "\n"
 
 

@@ -1,5 +1,8 @@
 """Report and dashboard structure: sections, tables, fallbacks and language labels."""
+import copy
+from html import unescape
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -61,12 +64,43 @@ class ReportLayoutTests(unittest.TestCase):
         self.assertIn("| 範囲 | repo root |", report)
         self.assertIn("| 観点 | 状態 | メモ |", report)
         self.assertNotIn("| Scope |", report)
-        self.assertIn("- **観点:** Database access (DB1)", report)
+        self.assertIn("- **観点:** データベースアクセス (DB1)", report)
         del doc["findings"][0]["step"]
         report = render.render_markdown(doc, "en")
         self.assertIn("| Scope | repo root |", report)
         self.assertIn("- **perspective:** Database access\n", report)
         self.assertIn("· Database access (DB1)</span>", render.render_html(complete_doc(), "en"))
+
+    def test_perspective_names_and_statuses_across_demo_reports(self):
+        self.assertEqual(set(render.PERSPECTIVE_NAMES_JA), set(findings.PERSPECTIVES))
+        for lang in ("ja", "en"):
+            filename = "findings.sample.ja.json" if lang == "ja" else "findings.sample.json"
+            doc = json.loads((REPO / "examples" / filename).read_text(encoding="utf-8"))
+            self.assertEqual({p["name"] for p in doc["perspectives"]}, set(findings.PERSPECTIVES))
+            doc["perspectives"][-2]["status"] = "not checked"
+            doc["perspectives"][-1]["status"] = "N/A"
+            original = copy.deepcopy(doc)
+            outputs = {"report.md": render.render_markdown(doc, lang),
+                       "dashboard.html": render.render_html(doc, lang),
+                       "assessment.html": render.render_assessment_html(doc, lang)}
+            labels = {"applied": "適用", "not checked": "未確認", "N/A": "該当なし"}
+            data = re.search(r"<template id='data'>(.*?)</template>", outputs["dashboard.html"])[1]
+            lamps = json.loads(unescape(data))["console"]["perspectives"]
+            expected_lamps = []
+            for p in doc["perspectives"]:
+                name, status = p["name"], p["status"]
+                label = render.PERSPECTIVE_NAMES_JA[name] if lang == "ja" else name
+                result = labels[status] if lang == "ja" else status
+                expected_lamps.append((label, result))
+                for filename, output in outputs.items():
+                    with self.subTest(lang=lang, filename=filename, name=name):
+                        row = (f"| {label} | {result} |" if filename.endswith(".md")
+                               else f"<td>{label}</td><td>{result}</td>")
+                        self.assertIn(row, output)
+                        if lang == "ja":
+                            self.assertNotIn(name, output)
+            self.assertEqual([(p["name"], p["result"]) for p in lamps], expected_lamps)
+            self.assertEqual(doc, original)
 
 
 class AppShellTests(unittest.TestCase):

@@ -39,6 +39,7 @@ from findings import (EXCLUDED, FINDING_KEYS, SchemaError, _atomic_write_all, as
                       nonempty, read_json, renumber, run, safe_output, shown_line, validate,
                       visible)
 from markdown_safe import as_text, block_safe, markdown_code, markdown_inline  # noqa: E402
+from perspective_labels import perspective_name  # noqa: E402
 
 TEMPLATES = Path(__file__).resolve().parent.parent / "templates"
 COMMENT = re.compile(r"<!--.*?-->[ \t]*\n?", re.S)
@@ -73,6 +74,8 @@ class Fill:
             return f.get(group, {}).get(key, "")
         if name == "location":
             return as_locations(f["location"])
+        if name == "category":
+            return perspective_name(f.get(name, ""), self.lang)
         return f.get(name, "")
 
     def block(self, name):

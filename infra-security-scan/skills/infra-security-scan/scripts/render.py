@@ -712,11 +712,11 @@ DISPLAY = {
         "Valid": "妥当", "Likely": "可能性高", "Unverified": "未検証", "Unlikely": "可能性低",
         "FalsePositive": "誤検知", "NotApplicable": "対象外",
         "open": "成立", "blocked": "遮断", "unknown": "不明",
-        "Applied": "実施", "N/A": "該当なし", "Not checked": "未確認",
+        "Applied": "適用", "N/A": "該当なし", "Not checked": "未確認",
         # Perspective names from reference/perspectives.md and meta.inputs kinds.
         "Network exposure": "ネットワーク露出", "Identity and privilege": "アイデンティティと権限",
         "Trust and federation": "信頼とフェデレーション", "Data protection": "データ保護",
-        "Compute and workload": "コンピュートとワークロード", "Kubernetes": "Kubernetes",
+        "Compute and workload": "コンピュートとワークロード", "Kubernetes": "Kubernetes クラスタ",
         "Serverless and API edge": "サーバーレスと API エッジ", "Secrets and keys": "シークレットと鍵",
         "Logging and detection": "ログと検知", "Resilience and recovery": "回復性と復旧",
         "Governance and guardrails": "ガバナンスとガードレール", "Pipeline and state": "パイプラインと state",

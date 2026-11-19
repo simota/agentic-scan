@@ -371,8 +371,46 @@ def revision(meta):
     return commit if visible(as_text(commit)) else "UNKNOWN"
 
 
-def category(f):
-    return f"{f['category']} ({f['step']})" if "step" in f else f["category"]
+# Display names for the recorded perspective names and statuses. findings.json
+# keeps the English values of the schema; only a Japanese rendering shows these.
+PERSPECTIVE_LABELS = {
+    "ja": {
+        "Boundaries and layering": "境界と層構造",
+        "Cohesion and responsibility": "凝集と責務",
+        "Coupling": "結合",
+        "Domain model and data ownership": "ドメインモデルとデータの所有",
+        "Consistency and transactions": "整合性とトランザクション",
+        "Failure handling": "障害時の処理",
+        "API and event contracts": "API とイベントの契約",
+        "Configuration and environment": "設定と環境",
+        "Testability": "テスト容易性",
+        "Operability": "運用性",
+        "Duplication and consistency of patterns": "重複と実装パターンの統一",
+        "Dependencies and evolution": "依存関係と長期的な保守",
+    },
+}
+PERSPECTIVE_STATUS_LABELS = {"ja": {"applied": "適用", "not checked": "未確認", "N/A": "該当なし"}}
+
+
+def perspective_name(name, lang):
+    return PERSPECTIVE_LABELS.get(lang, {}).get(name, name)
+
+
+def perspective_status(status, lang):
+    return PERSPECTIVE_STATUS_LABELS.get(lang, {}).get(status, status)
+
+
+# Display names for findings.RULE_STATUSES; the record keeps the English value.
+RULE_STATUS_LABELS = {"ja": {"holds": "遵守", "violated": "違反", "partly read": "一部のみ確認", "not checked": "未確認"}}
+
+
+def rule_status(status, lang):
+    return RULE_STATUS_LABELS.get(lang, {}).get(status, status)
+
+
+def category(f, lang="en"):
+    name = perspective_name(f["category"], lang)
+    return f"{name} ({f['step']})" if "step" in f else name
 
 
 def perspective_rows(doc, lang):
@@ -584,7 +622,7 @@ def render_markdown(doc, lang):
         lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}][{v['verdict']}] "
                      f"{heading_text(f['title'])}")
         lines.append("")
-        lines.append(f"- **{t['category']}:** {text(category(f))}")
+        lines.append(f"- **{t['category']}:** {text(category(f, lang))}")
         for key in FIELDS:
             if filled(f, key):
                 value = f[key]
@@ -615,7 +653,7 @@ def render_markdown(doc, lang):
                   f"| {t['id']} | {t['statement']} | {t['source']} | {t['rule_status']} |",
                   "|---|---|---|---|"]
         for r in doc["rules"]:
-            status = r["status"]
+            status = rule_status(r["status"], lang)
             if filled(r, "reason"):
                 status += f"\n{t['reason']}: {r['reason']}"
             lines.append(f"| {cell(rule_id(r))} | {cell(rule_statement(r, lang))} | "
@@ -624,7 +662,8 @@ def render_markdown(doc, lang):
     lines += [f"## {t['perspectives']}", "",
               f"| {t['perspective']} | {t['rule_status']} | {t['note']} |", "|---|---|---|"]
     for name, p in perspective_rows(doc, lang):
-        lines.append(f"| {cell(name)} | {cell(p['status'])} | {cell(p['note'])} |")
+        lines.append(f"| {cell(perspective_name(name, lang))} | {cell(perspective_status(p['status'], lang))} "
+                     f"| {cell(p['note'])} |")
     lines.append("")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         lines += [f"## {t[key]}", ""]
@@ -758,7 +797,7 @@ DASH = {
         "more_high": "未対応の High がほかに {n} 件あります（検出事項一覧に記載）。",
         "queue_more": "未対応 {total} 件のうち {shown} 件を表示しています。",
         "coverage_heading": "対象範囲・確認状況・制約",
-        "coverage_note": "観点ごとの確認状況を下に示します。not checked や未記録の観点は確認していません。"
+        "coverage_note": "観点ごとの確認状況を下に示します。未確認や未記録の観点は確認していません。"
                          "検出事項がゼロでも設計の健全性の保証にはなりません。",
         "limitations_count": "記録された制約",
         "limitations_empty": "制約事項が記録されていません。すべて確認済みであることを示すものではありません。",
@@ -1026,7 +1065,7 @@ def finding_markdown(f, lang):
     out = [f"## {one(f['id'])} · {one(f['title'])}", ""]
     for label, value in (("severity", f["severity"]), ("confidence", f["confidence"]),
                          ("verdict", f"{v['verdict']} ({v['method']})"),
-                         ("status", f.get("status", "Open")), ("category", category(f)),
+                         ("status", f.get("status", "Open")), ("category", category(f, lang)),
                          ("location", ", ".join(as_locations(f["location"])))):
         out.append(f"- {DASH[lang].get(label, t.get(label))}: {one(value)}")
     if filled(f, "rule"):
@@ -1110,11 +1149,11 @@ def console_model(doc, lang):
             "status_label": t["excluded"] if lane == "excluded" else status[f["id"]],
             "verdict": v["verdict"], "title": f["title"], "location": ", ".join(as_locations(f["location"])),
             "lane": lane, "open": lane in CONSOLE_OPEN, "excluded": lane == "excluded", "anchor": anchor(f),
-            "tags": [f["category"], f["confidence"]],
+            "tags": [perspective_name(f["category"], lang), f["confidence"]],
             "where": [{"label": t[key], "value": as_text(value) if filled({key: value}, key) else "",
                        **({"mono": True} if key == "location" else {})}
                       for key, value in (("location", ", ".join(as_locations(f["location"]))),
-                                         ("category", category(f)), ("rule", f.get("rule", "")),
+                                         ("category", category(f, lang)), ("rule", f.get("rule", "")),
                                          ("blast_radius", f.get("blast_radius", "")))],
             "evidence": {"text": v.get("evidence", "") if filled(v, "evidence") else "",
                          "method": v["method"], "notes": notes},
@@ -1131,7 +1170,8 @@ def console_model(doc, lang):
             tone = "ink"
         else:
             tone = "accent" if matched else "muted"
-        perspectives.append({"name": name, "result": p["status"], "note": p["note"], "tone": tone,
+        perspectives.append({"name": perspective_name(name, lang), "result": perspective_status(p["status"], lang),
+                             "note": p["note"], "tone": tone,
                              "on": bool(opened)})
     labels = {key[3:]: value for key, value in d.items() if key.startswith("cx_")}
     labels.update(copied=d["copied"], copy_failed=d["copy_failed"], fix_missing=d["missing_fix"],
@@ -1186,10 +1226,10 @@ def console_html(lang):
             "</div></div>")
 
 
-def bars(order, counter, colored=False):
+def bars(order, counter, colored=False, shown=lambda k: k):
     top = max([counter.get(k, 0) for k in order] + [1])
     return "".join(
-        f"<div class='bar'><span class='t'>{html_text(k)}</span><span class='track'>"
+        f"<div class='bar'><span class='t'>{html_text(shown(k))}</span><span class='track'>"
         f"<span class='fill{' ' + k if colored else ''}' data-w='{counter.get(k, 0) * 100 // top}'>"
         f"</span></span><span class='v'>{counter.get(k, 0)}</span></div>" for k in order)
 
@@ -1685,7 +1725,7 @@ def html_priority(doc, lang, status):
                     f"<span class='action-label'>{e(d[a])}</span></div>"
                     f"<h3><a href=\"#{anchor(f)}\">{e(f['id'])} · {e(f['title'])}</a></h3>"
                     f"<div class='verdict'>{e(f['confidence'])} · {e(f['validation']['verdict'])} · "
-                    f"{e(category(f))}</div>",
+                    f"{e(category(f, lang))}</div>",
                     "".join(f"<code class='location'>{e(p)}</code>" for p in as_locations(f["location"])),
                     f"<p>{e(f['impact'])}</p>" if filled(f, "impact") else ""]
             if a == "fix_now":
@@ -1707,10 +1747,10 @@ def html_priority(doc, lang, status):
 STATE_CLASS = {"violated": "bad", "partly read": "gap", "not checked": "gap", "—": "gap", "N/A": "na"}
 
 
-def html_state(status):
+def html_state(status, shown=None):
     """A status word, marked by its meaning so a broken rule or a coverage gap stands out."""
     cls = STATE_CLASS.get(status)
-    return f"<span class='state{' ' + cls if cls else ''}'>{html_text(status)}</span>"
+    return f"<span class='state{' ' + cls if cls else ''}'>{html_text(status if shown is None else shown)}</span>"
 
 
 def html_coverage(doc, lang):
@@ -1734,8 +1774,9 @@ def html_coverage(doc, lang):
            f"<div class='tablewrap'><table class='coverage-table'><thead><tr><th>{e(t['perspective'])}</th>"
            f"<th>{e(t['rule_status'])}</th><th>{e(t['note'])}</th></tr></thead><tbody>"]
     for name, p in rows:
-        out.append(f"<tr><td data-label='{escape(t['perspective'])}'>{e(name)}</td>"
-                   f"<td data-label='{escape(t['rule_status'])}'>{html_state(p['status'])}</td>"
+        out.append(f"<tr><td data-label='{escape(t['perspective'])}'>{e(perspective_name(name, lang))}</td>"
+                   f"<td data-label='{escape(t['rule_status'])}'>"
+                   f"{html_state(p['status'], perspective_status(p['status'], lang))}</td>"
                    f"<td data-label='{escape(t['note'])}'>{e(p['note'])}</td></tr>")
     out.append("</tbody></table></div></section>")
     return out
@@ -1761,7 +1802,7 @@ def html_rules(doc, lang):
            f"<th>{e(t['id'])}</th><th>{e(t['statement'])}</th><th>{e(t['source'])}</th>"
            f"<th>{e(t['rule_status'])}</th></tr></thead><tbody>"]
     for r in doc["rules"]:
-        rule_state = html_state(r["status"])
+        rule_state = html_state(r["status"], rule_status(r["status"], lang))
         if filled(r, "reason"):
             rule_state += f"<br>{e(t['reason'])}: {e(r['reason'])}"
         out.append(f"<tr><td class='nowrap' data-label='{escape(t['id'])}'>{e(rule_id(r))}</td>"
@@ -1782,7 +1823,7 @@ def html_charts(doc, lang, status, by_sev):
             f"{e(d['count_basis'])}</p><div class='grid'>"
             f"<div><h3>{e(d['by_sev'])}</h3>{bars(SEVERITIES, by_sev, colored=True)}</div>"
             f"<div><h3>{e(d['by_conf'])}</h3>{bars(CONFIDENCES, tally(included, lambda f: f['confidence']))}</div>"
-            f"<div><h3>{e(d['by_cat'])}</h3>{bars([k for k, _ in cats], dict(cats))}</div>"
+            f"<div><h3>{e(d['by_cat'])}</h3>{bars([k for k, _ in cats], dict(cats), shown=lambda k: perspective_name(k, lang))}</div>"
             f"<div><h3>{e(d['by_status'])}</h3>{bars(STATUSES, tally(included, lambda f: status[f['id']]))}</div>"
             f"<div><h3>{e(d['by_verdict'])}</h3>{bars(VERDICTS, verdict_counts(findings))}"
             f"<p class='section-note'>{e(d['excluded_note'])}</p></div></div></section>"]
@@ -1803,7 +1844,7 @@ def html_filters(findings, lang):
         f"<label><span>{e(d['confidence'])}</span><select id='f-conf'>"
         + options([(c, c) for c in CONFIDENCES], t["all"]) + "</select></label>"
         f"<label class='wide'><span>{e(d['category'])}</span><select id='f-cat'>"
-        + options([(c, c) for c in all_cats], t["all"]) + "</select></label>"
+        + options([(c, perspective_name(c, lang)) for c in all_cats], t["all"]) + "</select></label>"
         f"<label><span>{e(d['status'])}</span><select id='f-status'>"
         + options([(s, s) for s in STATUSES], t["all"]) + "</select></label>"
         f"<label><span>{e(d['verdict'])}</span><select id='f-verdict' data-excluded='{excluded_values}'>"
@@ -1821,7 +1862,7 @@ def html_finding(f, lang, status, order):
     t, d, e = LABELS[lang], DASH[lang], html_text
     v = f["validation"]
     x = is_excluded(f)
-    fields = [(t["category"], e(category(f)))]
+    fields = [(t["category"], e(category(f, lang)))]
     fields += [(t[k], e(f[k])) for k in FIELDS if filled(f, k)]
     fields.append((t["verdict"], e(f"{v['verdict']} ({v['method']})")))
     if filled(v, "evidence"):
@@ -1861,7 +1902,7 @@ def html_finding(f, lang, status, order):
         f"<span class='reg-title'><span>{e(f['title'])}</span>{locations}"
         f"<span class='toggle-label' aria-hidden='true'><span class='closed-label'>{e(d['expand'])}</span>"
         f"<span class='open-label'>{e(d['collapse'])}</span></span></span>"
-        f"<span class='reg-meta reg-cat' data-label='{escape(d['category'])}'>{e(f['category'])}</span>"
+        f"<span class='reg-meta reg-cat' data-label='{escape(d['category'])}'>{e(perspective_name(f['category'], lang))}</span>"
         f"</summary><div class='detail'><div class='detail-actions'><strong>{e(f['id'])} · {e(f['title'])}</strong>"
         f"<span class='detail-links'><button type='button' class='copy-finding' data-js hidden "
         f"data-copy='{escape(f['id'])}' aria-live='polite'>{e(d['copy_llm'])}</button>"

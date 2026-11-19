@@ -23,6 +23,8 @@ PATTERNS = {
     "Unclassified": ("未分類", "Unclassified"),
 }
 PERSPECTIVES = [k for k in PATTERNS if k != "Unclassified"]
+# Recorded perspective statuses (the schema enum) and the Japanese shown for each; English shows the value as is.
+PERSPECTIVE_STATUS_JA = {"applied": "適用", "not checked": "未確認", "N/A": "該当なし"}
 EVENT_TYPES = ("commission", "omission", "requirement", "not-defect")
 DEFECT_TYPES = ("commission", "omission")
 CHANNELS = ("feature", "fix", "refactor", "dependency", "config", "migration", "generated", "merge", "unknown", "none")
@@ -196,6 +198,10 @@ def clip_left(text, width):
 def pattern_name(pattern, lang):
     names = PATTERNS.get(pattern)
     return (names[0] if lang == "ja" else names[1]) if names else str(pattern)
+
+
+def perspective_status(status, lang):
+    return PERSPECTIVE_STATUS_JA.get(status, status) if lang == "ja" else status
 
 
 def git(repo, *args, check=True):

@@ -34,6 +34,30 @@ from excerpt import attach_sources, mask  # noqa: E402
 
 STAMP = '<meta name="prompt-scan-source" content="sha256:{}">'
 
+PERSPECTIVE_NAMES_JA = {
+    "Task and intent": "タスクと意図",
+    "Instruction consistency": "指示の一貫性",
+    "Structure and placement": "構成と配置",
+    "Variables and assembly": "変数と組み立て",
+    "Output contract": "出力契約",
+    "Examples": "入出力例",
+    "Tools and agents": "ツールとエージェント",
+    "Untrusted input": "信頼できない入力",
+    "Safety and refusal": "安全性と拒否応答",
+    "Context budget": "コンテキスト予算",
+    "Model and parameters": "モデルとパラメータ",
+    "Language and tone": "言語と文体",
+    "Evaluation": "評価とテスト",
+    "Maintainability": "保守性",
+}
+
+
+def perspective_label(name, L):
+    """Display name for a perspective or finding category; English passes through unchanged."""
+    names = L.get("perspective_names")
+    return names.get(name, name) if names else name
+
+
 LABELS = {
     "en": {
         "title": "Prompt review report", "dashboard": "Prompt review dashboard",
@@ -93,6 +117,7 @@ LABELS = {
         "no_match": "条件に合う指摘はありません。",
         "kinds": {"defect": "不具合", "improvement": "改善提案"},
         "results": {"applied": "実施", "N/A": "対象外", "not checked": "未確認"},
+        "perspective_names": PERSPECTIVE_NAMES_JA,
     },
 }
 
@@ -211,7 +236,7 @@ def console_model(data, model, L):
             "where": [
                 {"label": L["location"], "value": f.get("location") or "", "mono": True},
                 {"label": L["prompt"], "value": prompt_text, "mono": True},
-                {"label": L["perspective"], "value": f.get("category") or ""},
+                {"label": L["perspective"], "value": perspective_label(f.get("category") or "", L)},
                 {"label": L["symptom"], "value": f.get("symptom") or ""},
                 {"label": L["cause"], "value": f.get("cause") or ""},
                 {"label": L["impact"], "value": f.get("impact") or ""},
@@ -221,7 +246,8 @@ def console_model(data, model, L):
             "guidance": guidance,
         })
     perspectives = [
-        {**{k: p[k] for k in ("name", "note") if k in p},
+        {"name": perspective_label(p["name"], L),
+         **({"note": p["note"]} if "note" in p else {}),
          "result": L["results"].get(p["result"], p["result"]),
          "tone": "muted", "on": False}
         for p in data.get("perspectives", [])
@@ -438,7 +464,7 @@ def finding_html(f, L, excerpts):
             (L["kind"], f'<span class="kind kind-{f["kind"]}">{esc(L["kinds"][f["kind"]])}</span>'),
             (L["location"], f'<code>{esc(f["location"])}</code>'),
             (L["prompt"], esc(prompt) if prompt else None),
-            (L["perspective"], esc(f["category"])),
+            (L["perspective"], esc(perspective_label(f["category"], L))),
             (L["confidence"], esc(f["confidence"])),
             (L["verdict"], esc(v["verdict"]) + (f' <span class="muted">({esc(v["method"])})</span>'
                                                  if v.get("method") else "")),
@@ -612,7 +638,7 @@ def render_report_html(data, L, lang, excerpts):
         "inv", L["cap_inventory"], L, inv_cols,
         ("id-col", "name-col", "kind-col", "loc-col", "consumer-col", "model-col"), prompt_rows), L)
     persp_rows = "".join(
-        f'<tr><td>{esc(p["name"])}</td><td>{esc(L["results"][p["result"]])}</td><td>{esc(p.get("note", ""))}</td></tr>'
+        f'<tr><td>{esc(perspective_label(p["name"], L))}</td><td>{esc(L["results"][p["result"]])}</td><td>{esc(p.get("note", ""))}</td></tr>'
         for p in data.get("perspectives", []))
     persp_table = (f'<table class="coverage"><caption>{esc(L["cap_perspectives"])}</caption>'
                    '<colgroup><col class="perspective-col"><col class="result-col"><col class="note-col"></colgroup>'
@@ -726,6 +752,7 @@ function excluded(f){return D.excluded_verdicts.indexOf(f.verdict)>=0;}
 function statusText(f){return excluded(f)?L.excluded_short:f.status;}
 function badge(f){return el('span',{'class':'badge '+f.severity},f.severity);}
 function kindText(f){return L['part_short_'+f.kind];}
+function catText(c){return (L.perspective_names&&L.perspective_names[c])||c;}
 function action(f){return f.status==='Open'&&f.verdict==='Valid'&&f.confidence==='Confirmed'?'fix_now':'verify_first';}
 function count(fs,key,label){var c=Object.create(null);fs.forEach(function(f){var k=label?label(f):f[key];c[k]=(c[k]||0)+1;});return c;}
 function listInto(box,items,empty){if(!items.length){box.appendChild(el('p',{'class':'muted'},empty));return;}var ul=el('ul');items.forEach(function(x){ul.appendChild(el('li',null,x));});box.appendChild(ul);}
@@ -749,10 +776,10 @@ byId('coverage-count').textContent=L.limitations_count+': '+D.limitations.length
 if(!D.perspectives.length)byId('perspectives').appendChild(el('p',{'class':'muted'},L.coverage_missing));
 D.perspectives.forEach(function(p){var box=el('div',{'class':'perspective'});box.appendChild(el('strong',null,p.name));box.appendChild(el('p',null,L.results[p.result]||p.result||L.not_recorded));if(p.note)box.appendChild(el('p',{'class':'muted'},p.note));byId('perspectives').appendChild(box);});
 function bars(id,key,order,colored,fs,label){var c=count(fs||F,key,label),keys=order||Object.keys(c).sort(function(a,b){return c[b]-c[a]||a.localeCompare(b);});var max=Math.max.apply(null,keys.map(function(k){return c[k]||0;}).concat([1]));keys.forEach(function(k){var r=el('div',{'class':'bar'});r.appendChild(el('span',{'class':'t'},k));var t=el('div',{'class':'track'}),fill=el('div',{'class':'fill'});fill.style.width=((c[k]||0)/max*100)+'%';if(colored)fill.style.background='var(--'+k.toLowerCase()+')';t.appendChild(fill);r.appendChild(t);r.appendChild(el('span',{'class':'v'},c[k]||0));byId(id).appendChild(r);});}
-bars('c-sev','severity',SEV,true);bars('c-kind','kind',D.parts.map(function(p){return L['part_short_'+p];}),false,F,kindText);bars('c-conf','confidence',CONF);bars('c-cat','category');bars('c-status','status',ST);bars('c-verdict','verdict',D.order.verdict,false,ALL);
+bars('c-sev','severity',SEV,true);bars('c-kind','kind',D.parts.map(function(p){return L['part_short_'+p];}),false,F,kindText);bars('c-conf','confidence',CONF);bars('c-cat','category',null,false,F,function(f){return catText(f.category);});bars('c-status','status',ST);bars('c-verdict','verdict',D.order.verdict,false,ALL);
 function opts(id,vals,first){var s=byId(id);if(first)s.appendChild(el('option',{value:''},first));vals.forEach(function(v){var pair=Array.isArray(v)?v:[v,v];s.appendChild(el('option',{value:pair[0]},pair[1]));});s.onchange=function(){if(id==='f-verdict'&&D.excluded_verdicts.indexOf(s.value)>=0)byId('f-scope').value='all';draw();};}
 opts('f-scope',[['included',L.included_set],['excluded',L.excluded_set],['all',L.all_records]]);opts('f-part',D.parts.map(function(part){return [part,L['part_short_'+part]];}),L.part_all);opts('f-sort',[['priority',L.priority_sort],['severity',L.severity_sort]]);
-opts('f-sev',SEV,L.all);opts('f-conf',CONF,L.all);opts('f-cat',Object.keys(count(ALL,'category')).sort(),L.all);opts('f-prompt',D.prompt_ids,L.all);opts('f-status',ST,L.all);opts('f-verdict',D.order.verdict,L.all_verdicts);
+opts('f-sev',SEV,L.all);opts('f-conf',CONF,L.all);opts('f-cat',Object.keys(count(ALL,'category')).sort().map(function(c){return [c,catText(c)];}),L.all);opts('f-prompt',D.prompt_ids,L.all);opts('f-status',ST,L.all);opts('f-verdict',D.order.verdict,L.all_verdicts);
 // Large registers redraw once typing pauses instead of on every keystroke.
 var q=byId('f-q'),searchTimer=null;q.placeholder=L.search;q.oninput=function(){clearTimeout(searchTimer);if(ALL.length>300)searchTimer=setTimeout(draw,150);else draw();};
 function v(id){return byId(id).value;}
@@ -763,7 +790,7 @@ function oneLine(v){return String(v).replace(/\s*[\r\n]+\s*/g,' ');}
 function fenced(v){var fc=fence(v);return fc+'text\n'+v+'\n'+fc;}
 function asText(v){return Array.isArray(v)?v.map(function(x){return '- '+x;}).join('\n'):v;}
 function findingMarkdown(f){var out=['## '+oneLine(f.id)+' · '+oneLine(f.title),''],p=function(label,value){if(value)out.push('- '+label+': '+oneLine(value));},block=function(label,value,raw){if(value)out.push('','### '+label,'',raw?value:fenced(value));};
-p(L.severity,f.severity);p(L.part,kindText(f));p(L.confidence,f.confidence);p(L.status,statusText(f));p(L.verdict,f.verdict);p(L.category,f.category);p(L.prompt,f.prompts.join(', '));p(L.location,f.location);
+p(L.severity,f.severity);p(L.part,kindText(f));p(L.confidence,f.confidence);p(L.status,statusText(f));p(L.verdict,f.verdict);p(L.category,catText(f.category));p(L.prompt,f.prompts.join(', '));p(L.location,f.location);
 if(f.status==='Open'&&!excluded(f)){var a=action(f);block(L[a],L[a+'_note'],true);}['symptom','cause','impact','fix'].forEach(function(k){block(L[k],f[k]);});
 if(f.proposal){block(L.proposal_before,f.proposal.before);block(L.proposal_after,f.proposal.after);}block(L.test,asText(f.test));block(L.evidence,f.validation.evidence);block(L.validation_method,f.validation.method);
 if(f.snippet){var lines=f.snippet.lines.map(function(text,i){var n=f.snippet.start+i;return (n>=f.snippet.hit[0]&&n<=f.snippet.hit[1]?'>':' ')+String(n).padStart(5,' ')+' '+text;}).join('\n'),fc=fence(lines);block(L.snippet,fc+'\n'+lines+'\n'+fc,true);}
@@ -789,12 +816,12 @@ if(f.snippet)field(L.snippet,snippetNode(f.snippet.start,f.snippet.lines,f.snipp
 var refs=f.references||[];if(refs.length){var ul=el('ul',{'class':'refs'});refs.forEach(function(r){var li=el('li');li.appendChild(el('a',{href:r.url,target:'_blank',rel:'noopener noreferrer'},r.title||r.url));ul.appendChild(li);});field(L.references,ul);}td.appendChild(dl);
 if(f.previous_validation&&typeof f.previous_validation==='object'){var history=el('aside',{'class':'history'});history.appendChild(el('strong',null,L.previous_validation));history.appendChild(el('p',null,L.history_note));['verdict','evidence','method'].forEach(function(k){if(typeof f.previous_validation[k]==='string')history.appendChild(el('p',null,f.previous_validation[k]));});td.appendChild(history);}dt.appendChild(td);}
 var searchCache=new Map();
-function searchText(f){if(searchCache.has(f))return searchCache.get(f);var val=f.validation||{},pr=f.proposal||{},text=[f.id,f.title,f.location,f.category,f.prompts.join(' '),f.symptom,f.cause,f.impact,f.fix,pr.before,pr.after,asText(f.test),f.status,f.severity,f.kind,kindText(f),f.confidence,f.verdict,val.evidence,val.method].filter(Boolean).join('\n').toLowerCase();searchCache.set(f,text);return text;}
+function searchText(f){if(searchCache.has(f))return searchCache.get(f);var val=f.validation||{},pr=f.proposal||{},text=[f.id,f.title,f.location,f.category,catText(f.category),f.prompts.join(' '),f.symptom,f.cause,f.impact,f.fix,pr.before,pr.after,asText(f.test),f.status,f.severity,f.kind,kindText(f),f.confidence,f.verdict,val.evidence,val.method].filter(Boolean).join('\n').toLowerCase();searchCache.set(f,text);return text;}
 function draw(){clearTimeout(searchTimer);var tb=byId('rows');tb.textContent='';var term=q.value.trim().toLowerCase(),scope=v('f-scope');var pool=scope==='all'?ALL:ALL.filter(function(f){return scope==='excluded'?excluded(f):!excluded(f);});var shown=pool.filter(function(f){return (!v('f-part')||f.kind===v('f-part'))&&(!v('f-sev')||f.severity===v('f-sev'))&&(!v('f-conf')||f.confidence===v('f-conf'))&&(!v('f-cat')||f.category===v('f-cat'))&&(!v('f-prompt')||f.prompts.indexOf(v('f-prompt'))>=0)&&(!v('f-status')||f.status===v('f-status'))&&(!v('f-verdict')||f.verdict===v('f-verdict'))&&(!term||searchText(f).indexOf(term)>=0);});
 shown.sort(function(a,b){var status=v('f-sort')==='priority'?Number(a.status!=='Open')-Number(b.status!=='Open'):0;return status||SEV.indexOf(a.severity)-SEV.indexOf(b.severity)||(v('f-sort')==='priority'?Number(action(a)!=='fix_now')-Number(action(b)!=='fix_now'):0)||D.parts.indexOf(a.kind)-D.parts.indexOf(b.kind)||String(a.id).localeCompare(String(b.id),'en',{numeric:true});});
 byId('result-count').textContent=fmt(L.showing,{shown:shown.length,total:pool.length});
 if(!shown.length){var empty=el('tr'),td=el('td',{colspan:7,'class':'empty'},pool.length?L.no_matches:L.no_records);empty.appendChild(td);tb.appendChild(empty);return;}
-shown.forEach(function(f){var anchor=D.anchors[f.id],tr=el('tr',{'class':'row',id:anchor}),dt=details(f,anchor);var labels=['ID',L.severity,L.part,L.confidence,L.verdict,L.title_col,L.category];var values=[f.id,null,kindText(f),f.confidence,f.verdict,null,f.category],button;
+shown.forEach(function(f){var anchor=D.anchors[f.id],tr=el('tr',{'class':'row',id:anchor}),dt=details(f,anchor);var labels=['ID',L.severity,L.part,L.confidence,L.verdict,L.title_col,L.category];var values=[f.id,null,kindText(f),f.confidence,f.verdict,null,catText(f.category)],button;
 values.forEach(function(value,i){var cell=el('td',{'data-label':labels[i]},value);if(i===1)cell.appendChild(badge(f));if(i===5){button=el('button',{type:'button','class':'finding-toggle','aria-expanded':String(!dt.hidden),'aria-controls':dt.id},f.title);button.appendChild(el('span',{'class':'toggle-label'},dt.hidden?L.expand:L.collapse));cell.appendChild(button);cell.appendChild(el('code',{'class':'location'},f.location));}tr.appendChild(cell);});
 function toggle(){if(dt.hidden)fillDetails(dt,f,anchor);dt.hidden=!dt.hidden;if(dt.hidden)expanded.delete(anchor);else expanded.add(anchor);button.setAttribute('aria-expanded',String(!dt.hidden));button.querySelector('.toggle-label').textContent=dt.hidden?L.expand:L.collapse;}
 button.onclick=function(e){e.stopPropagation();toggle();};tr.onclick=function(e){if(!e.target.closest('a,button'))toggle();};tb.appendChild(tr);tb.appendChild(dt);});}
@@ -1018,7 +1045,9 @@ def render_dashboard(data, L, lang, excerpts):
         "order": {"severity": SEVERITIES, "confidence": CONFIDENCES, "status": STATUSES, "verdict": VERDICTS},
         "excluded_verdicts": sorted(EXCLUDED),
         **{k: data.get(k, []) for k in STRING_LISTS},
-        "perspectives": [{k: p[k] for k in ("name", "result", "note") if k in p} for p in data.get("perspectives", [])],
+        "perspectives": [{"name": perspective_label(p["name"], L),
+                          **{k: p[k] for k in ("result", "note") if k in p}}
+                         for p in data.get("perspectives", [])],
     }
     # Escape every less-than sign: <!-- and <script also change HTML parsing.
     blob = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c") \

@@ -146,6 +146,33 @@ class CompareTests(unittest.TestCase):
         self.assertIn("# 診断の比較", out)
         self.assertIn("## データルール台帳", out)
 
+    def test_perspective_changes_are_localized_only_in_japanese_markdown(self):
+        old, new = sample(), sample()
+        previous, current = findings.PERSPECTIVES[:2]
+        new["findings"][0]["category"] = current
+        new["findings"][0].pop("step", None)
+        new["perspectives"][0]["status"] = "not checked"
+        new["perspectives"][1]["status"] = "N/A"
+        new["meta"]["lang"] = "ja"
+        code, ja, err = self.compared(old, new)
+        self.assertEqual(code, 0, err)
+        previous_ja, current_ja = (render.PERSPECTIVE_NAMES_JA[name] for name in (previous, current))
+        self.assertIn(f"観点: {previous_ja} → {current_ja}", ja)
+        self.assertIn(f"- {previous_ja}: 適用 → 未確認", ja)
+        self.assertIn(f"- {current_ja}: 適用 → 該当なし", ja)
+        self.assertNotIn(previous, ja)
+        self.assertNotIn(current, ja)
+        code, en, err = self.compared(old, new, "--lang", "en")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"perspective: {previous} → {current}", en)
+        self.assertIn(f"- {previous}: applied → not checked", en)
+        self.assertIn(f"- {current}: applied → N/A", en)
+        code, output, err = self.compared(old, new, "--format", "json")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(output)["perspectives"],
+                         [{"name": previous, "earlier": "applied", "later": "not checked"},
+                          {"name": current, "earlier": "applied", "later": "N/A"}])
+
 
 if __name__ == "__main__":
     unittest.main()

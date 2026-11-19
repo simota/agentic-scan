@@ -35,6 +35,7 @@ from findings import (CONFIDENCES, CONTROL, CONVENTION_STATUSES, DEFINITIVE,  # 
                       safe_output, shown_line, validate, visible)
 from markdown_safe import (BIDI_CONTROLS, as_text, block_safe, heading_text,  # noqa: E402
                            markdown_code, markdown_inline, markdown_table_cell)
+from perspective_labels import perspective_name, perspective_status  # noqa: E402
 import report_style  # noqa: E402
 
 URL_SCHEME = re.compile(r"https?://", re.IGNORECASE)
@@ -165,7 +166,6 @@ FIELDS = ("location", "gap", "remedy", "scenario", "blast_radius", "trace", "imp
           "exposure", "coverage", "asserts", "steps", "depends_on", "convention", "fix")
 LIST_FIELDS = ("asserts", "steps")
 
-
 def field_text(f, key, lang):
     """A finding field as one string: lists and the coverage object flattened."""
     value = f[key]
@@ -216,8 +216,9 @@ def revision(meta):
     return commit if visible(commit) else "UNKNOWN"
 
 
-def category(f):
-    return f"{f['category']} ({f['step']})" if "step" in f else f["category"]
+def category(f, lang="en"):
+    name = perspective_name(f["category"], lang)
+    return f"{name} ({f['step']})" if "step" in f else name
 
 
 def perspective_rows(doc, lang):
@@ -303,7 +304,7 @@ def render_markdown(doc, lang):
         lines.append(f"### {f['id']} [{f['severity']}][{f['testability']}][{f['effort']}]"
                      f"[{f['confidence']}][{v['verdict']}] {heading_text(f['title'])}")
         lines.append("")
-        lines.append(f"- **{t['category']}:** {text(category(f))}")
+        lines.append(f"- **{t['category']}:** {text(category(f, lang))}")
         for key in FIELDS:
             if key == "coverage" and filled(f, key):
                 s = f["coverage"]
@@ -356,7 +357,8 @@ def render_markdown(doc, lang):
     lines += [f"## {t['perspectives']}", "",
               f"| {t['perspective']} | {t['rule_status']} | {t['note']} |", "|---|---|---|"]
     for name, p in perspective_rows(doc, lang):
-        lines.append(f"| {cell(name)} | {cell(p['status'])} | {cell(p['note'])} |")
+        lines.append(f"| {cell(perspective_name(name, lang))} | "
+                     f"{cell(perspective_status(p['status'], lang))} | {cell(p['note'])} |")
     lines.append("")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         lines += [f"## {t[key]}", ""]
@@ -479,7 +481,7 @@ DASH = {
         "more_high": "未対応の High がほかに {n} 件あります（検出事項一覧に記載）。",
         "queue_more": "未対応 {total} 件のうち {shown} 件を表示しています。",
         "coverage_heading": "対象範囲・確認状況・制約",
-        "coverage_note": "観点ごとの確認状況を下に示します。not checked や未記録の観点は確認していません。"
+        "coverage_note": "観点ごとの確認状況を下に示します。未確認や未記録の観点は確認していません。"
                          "検出事項がゼロでもテストがすべての不具合を捕まえることの保証にはなりません。",
         "limitations_count": "記録された制約",
         "limitations_empty": "制約事項が記録されていません。すべて確認済みであることを示すものではありません。",
@@ -737,7 +739,7 @@ def finding_markdown(f, lang):
     for label, value in (("severity", f["severity"]), ("testability", f["testability"]),
                          ("effort", f["effort"]), ("confidence", f["confidence"]),
                          ("verdict", f"{v['verdict']} ({v['method']})"),
-                         ("status", f.get("status", "Open")), ("category", category(f)),
+                         ("status", f.get("status", "Open")), ("category", category(f, lang)),
                          ("remedy", f"{f['remedy']} ({f['gap']})"),
                          ("location", ", ".join(as_locations(f["location"])))):
         out.append(f"- {DASH[lang].get(label, t.get(label))}: {one(value)}")
@@ -866,7 +868,7 @@ def console_model(doc, lang):
         location = "\n".join(as_locations(f["location"]))
         status = f.get("status", "Open")
         excluded = lane == "excluded"
-        values = {"location": location, "category": category(f)}
+        values = {"location": location, "category": category(f, lang)}
         for key in ("scenario", "impact"):
             values[key] = f.get(key)
         records.append({
@@ -882,8 +884,9 @@ def console_model(doc, lang):
             "fix": plain(f.get("fix")),
             "guidance": d[lane + "_note"] if lane in ("fix_now", "pin_first", "verify_first") else "",
         })
-    lamps = report_style.perspective_lamps(doc, records, lambda status: status)
+    lamps = report_style.perspective_lamps(doc, records, lambda status: perspective_status(status, lang))
     for lamp in lamps:
+        lamp["name"] = perspective_name(lamp["name"], lang)
         lamp["note"] = plain(lamp["note"])
     rank = {severity: i for i, severity in enumerate(SEVERITIES)}
     records.sort(key=lambda card: (rank[card["severity"]], card["id"]))
@@ -923,9 +926,7 @@ def render_html(doc, lang):
 def _render_page(doc, lang, assessment=False):
     t, d = LABELS[lang], DASH[lang]
     e = html_text
-    # Severity, testability, status, verdict and perspective names stay English on the
-    # Japanese page; badges, register cells, filters and charts mark them so a
-    # screen reader reads them in English (WCAG 3.1.2).
+    # Mark English severity, testability, finding status and verdict for screen readers (WCAG 3.1.2).
     en = " lang='en'" if lang != "en" else ""
 
     def ui(text):  # a UI string that may name the English vocabulary
@@ -991,7 +992,7 @@ def _render_page(doc, lang, assessment=False):
                f"</div></div>")
     if findings and not assessment:
         excluded_values = " ".join(EXCLUDED)
-        all_cats = sorted({f["category"] for f in findings})
+        all_cats = [perspective_name(c, lang) for c in sorted({f["category"] for f in findings})]
         out.append(
             "<div class='panel filters-panel' data-js hidden><div class='filters'>"
             f"<label><span>{e(d['record_set'])}</span><select id='f-scope'>"
@@ -1006,7 +1007,7 @@ def _render_page(doc, lang, assessment=False):
             f"<label><span>{e(d['confidence'])}</span><select id='f-conf'>"
             + options([(c, c) for c in CONFIDENCES], t["all"], en) + "</select></label>"
             f"<label><span>{e(d['category'])}</span><select id='f-cat'>"
-            + options([(c, c) for c in all_cats], t["all"], en) + "</select></label>"
+            + options([(c, c) for c in all_cats], t["all"]) + "</select></label>"
             f"<label><span>{e(d['status'])}</span><select id='f-status'>"
             + options([(s, s) for s in STATUSES], t["all"], en) + "</select></label>"
             f"<label><span>{e(d['verdict'])}</span><select id='f-verdict' data-excluded='{excluded_values}'>"
@@ -1042,7 +1043,7 @@ def _render_page(doc, lang, assessment=False):
         def word(text):  # fixed English vocabulary
             return f"<span{en}>{e(text)}</span>" if en else e(text)
 
-        fields = [(t["category"], word(category(f))),
+        fields = [(t["category"], e(category(f, lang))),
                   (d["testability"], f"{word(f['testability'])} · {e(d['effort'])} {word(f['effort'])} · "
                               f"{word(f['confidence'])}")]
         def value(k):
@@ -1077,8 +1078,9 @@ def _render_page(doc, lang, assessment=False):
             guidance = f"<p class='muted'>{ui(d['excluded_note'])}</p>"
         # Excluded findings are not in the severity counts, so not in their filters.
         group = "excluded' class='excluded" if x else f["severity"]
+        cat = perspective_name(f["category"], lang)
         attrs = {"sev": f["severity"], "testability": f["testability"], "effort": f["effort"],
-                 "conf": f["confidence"], "cat": f["category"],
+                 "conf": f["confidence"], "cat": cat,
                  "status": status[f["id"]], "verdict": v["verdict"], "x": "1" if x else "0",
                  "p": p_order[f["id"]], "s": s_order[f["id"]]}
         data = "".join(f" data-{k}='{escape(as_text(val))}'" for k, val in attrs.items())
@@ -1100,7 +1102,8 @@ def _render_page(doc, lang, assessment=False):
             f"<span class='reg-title'><span>{e(f['title'])}</span>{locations}"
             f"<span class='toggle-label' aria-hidden='true'><span class='closed-label'>{e(d['expand'])}</span>"
             f"<span class='open-label'>{e(d['collapse'])}</span></span></span>"
-            f"<span class='reg-meta reg-cat'>{column(d['category'])}<span{en}>{e(f['category'])}</span></span>"
+            f"<span class='reg-meta reg-cat'>{column(d['category'])}"
+            f"<span>{e(cat)}</span></span>"
             f"</summary><div class='detail'>{actions}{guidance}<dl>"
             + "".join(f"<dt>{e(k)}</dt><dd>{val}</dd>" for k, val in fields) + "</dl></div></details></div>")
     out.append("</div></div></section>")
@@ -1195,7 +1198,8 @@ def _render_page(doc, lang, assessment=False):
                f"<table class='coverage-table'><thead><tr><th>{e(t['perspective'])}</th>"
                f"<th>{e(t['rule_status'])}</th><th>{e(t['note'])}</th></tr></thead><tbody>")
     for name, p in rows:
-        out.append(f"<tr><td{en}>{e(name)}</td><td{en}>{e(p['status'])}</td><td>{e(p['note'])}</td></tr>")
+        out.append(f"<tr><td>{e(perspective_name(name, lang))}</td>"
+                   f"<td>{e(perspective_status(p['status'], lang))}</td><td>{e(p['note'])}</td></tr>")
     out.append("</tbody></table></div></section>")
 
     scales, closing = legend(doc, lang)
@@ -1237,12 +1241,13 @@ def _render_page(doc, lang, assessment=False):
         out.append("</tbody></table></div></section>")
 
     cats = sorted(tally(included, lambda f: f["category"]).items(), key=lambda kv: (-kv[1], kv[0]))
+    cat_counts = {perspective_name(name, lang): count for name, count in cats}
     out.append(f"<section class='panel' id='charts' tabindex='-1'><h2>{e(d['overview'])}</h2><p class='section-note'>"
                f"{e(d['count_basis'])}</p><div class='grid'>"
                f"<div><h3>{e(d['by_sev'])}</h3>{bars(SEVERITIES, by_sev, True, en)}</div>"
                f"<div><h3>{e(d['by_testability'])}</h3>{bars(TESTABILITIES, tally(included, lambda f: f['testability']), lang_attr=en)}</div>"
                f"<div><h3>{e(d['by_conf'])}</h3>{bars(CONFIDENCES, tally(included, lambda f: f['confidence']), lang_attr=en)}</div>"
-               f"<div><h3>{e(d['by_cat'])}</h3>{bars([k for k, _ in cats], dict(cats), lang_attr=en)}</div>"
+               f"<div><h3>{e(d['by_cat'])}</h3>{bars(list(cat_counts), cat_counts)}</div>"
                f"<div><h3>{e(d['by_status'])}</h3>{bars(STATUSES, tally(included, lambda f: status[f['id']]), lang_attr=en)}</div>"
                f"<div><h3>{e(d['by_verdict'])}</h3>{bars(VERDICTS, verdict_counts(findings), lang_attr=en)}"
                f"<p class='section-note'>{ui(d['excluded_note'])}</p></div></div></section>")

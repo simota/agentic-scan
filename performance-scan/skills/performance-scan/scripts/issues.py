@@ -40,7 +40,7 @@ from findings import (EXCLUDED, FINDING_MENTION, MEASUREMENT_RUNS, SEVERITIES, S
                       escape_unencodable_console, file_mode, finding_locations,
                       finding_status, read_json, resolve_path, validate, write_atomic)
 from render import (block_fence, markdown_code, markdown_link, markdown_text,  # noqa: E402
-                    reference_title, shown, text_lines)
+                    perspective_name, reference_title, shown, text_lines)
 
 LABELS = {
     "en": {
@@ -165,7 +165,7 @@ def render_issue(f, doc, lang, index=None):
     lines = [f"**{t['title']}:** {markdown_text(issue_title(f))}", "",
              f"## {t['summary']}", "", f"| {t['item']} | {t['value']} |", "|---|---|"]
     lines += [f"| {label} | {cell(value)} |" for label, value in rows]
-    lines.append(f"| {t['perspective']} | {f['category']}{step} |")
+    lines.append(f"| {t['perspective']} | {perspective_name(f['category'], lang)}{step} |")
     lines.append(f"| {t['location']} | "
                  + "<br>".join(code_cell(loc) for loc in finding_locations(f)) + " |")
     lines.append(f"| {t['revision']} | {cell(meta.get('commit', '').strip() or 'UNKNOWN')} |")

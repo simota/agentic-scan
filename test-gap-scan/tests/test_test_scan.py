@@ -22,6 +22,7 @@ sys.path.insert(0, str(SCRIPTS))
 sys.dont_write_bytecode = True
 
 import findings  # noqa: E402
+from perspective_labels import PERSPECTIVE_NAMES_JA, PERSPECTIVE_STATUSES_JA  # noqa: E402
 import render  # noqa: E402
 
 
@@ -1741,8 +1742,7 @@ class AccessibilityTest(unittest.TestCase):
         self.assertIn("<span class='badge High' lang='en'>High</span>", html)
         self.assertIn("<span class='t' lang='en'>Seam</span>", html)  # charts
         self.assertIn("<div class='verdict' lang='en'>", html)  # priority cards
-        # perspectives table, idiom ledger status, finding details
-        self.assertIn("<td lang='en'>Untested critical paths</td><td lang='en'>applied</td>", html)
+        # Idiom ledger status and finding details.
         self.assertIn("<td><span lang='en'>drifted</span></td>", html)  # a reason may follow
         self.assertIn("<dd><span lang='en'>Valid (static)</span></dd>", html)
         self.assertIn("<dd><span lang='en'>Add Behaviour Test</span></dd>", html)
@@ -1797,6 +1797,37 @@ class EnglishVocabularySweepTest(unittest.TestCase):
 
 class JapaneseWordingTest(unittest.TestCase):
     """One Japanese name per field, the same in the dashboard, report and templates."""
+
+    def test_perspective_names_and_statuses_across_demo_reports(self):
+        self.assertEqual(set(PERSPECTIVE_NAMES_JA), set(findings.PERSPECTIVES))
+        self.assertEqual(set(PERSPECTIVE_STATUSES_JA), set(findings.PERSPECTIVE_STATUSES))
+        for lang in ("ja", "en"):
+            source = SAMPLE.with_name("findings.sample.ja.json") if lang == "ja" else SAMPLE
+            doc = json.loads(source.read_text(encoding="utf-8"))
+            self.assertEqual({p["name"] for p in doc["perspectives"]}, set(findings.PERSPECTIVES))
+            doc["perspectives"][-2]["status"] = "not checked"
+            doc["perspectives"][-1]["status"] = "N/A"
+            original = copy.deepcopy(doc)
+            outputs = {name: data.decode("utf-8")
+                       for name, data in render.rendered_outputs(doc, lang).items()}
+            labels = {"applied": "適用", "not checked": "未確認", "N/A": "該当なし"}
+            data = re.search(r"id='labels'>(.*?)</script>", outputs["dashboard.html"])[1]
+            lamps = json.loads(data)["console"]["perspectives"]
+            expected_lamps = []
+            for p in doc["perspectives"]:
+                name, status = p["name"], p["status"]
+                label = PERSPECTIVE_NAMES_JA[name] if lang == "ja" else name
+                result = labels[status] if lang == "ja" else status
+                expected_lamps.append((label, result))
+                for filename, output in outputs.items():
+                    with self.subTest(lang=lang, filename=filename, name=name):
+                        row = (f"| {label} | {result} |" if filename.endswith(".md")
+                               else f"<td>{label}</td><td>{result}</td>")
+                        self.assertIn(row, output)
+                        if lang == "ja":
+                            self.assertNotIn(name, output)
+            self.assertEqual([(p["name"], p["result"]) for p in lamps], expected_lamps)
+            self.assertEqual(doc, original)
 
     def test_a_field_has_one_label(self):
         labels, dash = render.LABELS["ja"], render.DASH["ja"]
@@ -1952,7 +1983,8 @@ class RenderedContentTest(unittest.TestCase):
             report = render.render_markdown(doc, lang)
             self.assertIn(f"| {t['window']} | {render.markdown_inline(doc['meta']['window'])} |",
                           report)
-            self.assertIn("Untested critical paths (UC1)", report)
+            name = "重要フローの未テスト箇所" if lang == "ja" else "Untested critical paths"
+            self.assertIn(f"{name} (UC1)", report)
             self.assertIn("C-01 · CLOCK", report)
             self.assertIn(f"({t['inferred']})", report)
             self.assertIn(f"- **{t['analysis']}:** CC 41", report)

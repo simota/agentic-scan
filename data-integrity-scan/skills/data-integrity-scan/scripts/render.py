@@ -222,8 +222,34 @@ def revision(meta):
     return commit if visible(commit) else "UNKNOWN"
 
 
-def category(f):
-    return f"{f['category']} ({f['step']})" if "step" in f else f["category"]
+PERSPECTIVE_NAMES_JA = {
+    "Schema constraints": "スキーマ制約",
+    "Application-only invariants": "アプリケーションだけで守る不変条件",
+    "Migration locking and rewrites": "マイグレーション時のロックとテーブル書き換え",
+    "Irreversible and destructive changes": "破壊的な変更とその可逆性",
+    "Deploy compatibility": "デプロイ時のコードとスキーマの互換性",
+    "Backfills and data migrations": "バックフィルとデータ移行",
+    "Transaction boundaries": "トランザクション境界",
+    "Concurrency and lost updates": "並行処理と更新の取りこぼし",
+    "Deletion and cascades": "削除と連鎖削除",
+    "Types and precision": "データ型と精度",
+    "Keys and identity": "キーと識別子の一意性・安定性",
+    "Backup and restore assumptions": "バックアップと復元の前提",
+}
+PERSPECTIVE_STATUSES_JA = {"applied": "適用", "not checked": "未確認", "N/A": "該当なし"}
+
+
+def perspective_name(name, lang):
+    return PERSPECTIVE_NAMES_JA[name] if lang == "ja" else name
+
+
+def perspective_status(status, lang):
+    return PERSPECTIVE_STATUSES_JA.get(status, status) if lang == "ja" else status
+
+
+def category(f, lang):
+    name = perspective_name(f["category"], lang)
+    return f"{name} ({f['step']})" if "step" in f else name
 
 
 def perspective_rows(doc, lang):
@@ -309,7 +335,7 @@ def render_markdown(doc, lang):
         lines.append(f"### {f['id']} [{f['severity']}][{f['rollout']}][{f['effort']}]"
                      f"[{f['confidence']}][{v['verdict']}] {heading_text(f['title'])}")
         lines.append("")
-        lines.append(f"- **{t['category']}:** {text(category(f))}")
+        lines.append(f"- **{t['category']}:** {text(category(f, lang))}")
         for key in FIELDS:
             if key == "enforcement" and filled(f, key):
                 s = f["enforcement"]
@@ -362,7 +388,8 @@ def render_markdown(doc, lang):
     lines += [f"## {t['perspectives']}", "",
               f"| {t['perspective']} | {t['rule_status']} | {t['note']} |", "|---|---|---|"]
     for name, p in perspective_rows(doc, lang):
-        lines.append(f"| {cell(name)} | {cell(p['status'])} | {cell(p['note'])} |")
+        lines.append(f"| {cell(perspective_name(name, lang))} | "
+                     f"{cell(perspective_status(p['status'], lang))} | {cell(p['note'])} |")
     lines.append("")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         lines += [f"## {t[key]}", ""]
@@ -483,7 +510,7 @@ DASH = {
         "more_high": "未対応の High がほかに {n} 件あります（検出事項一覧に記載）。",
         "queue_more": "未対応 {total} 件のうち {shown} 件を表示しています。",
         "coverage_heading": "対象範囲・確認状況・制約",
-        "coverage_note": "観点ごとの確認状況を下に示します。not checked や未記録の観点は確認していません。"
+        "coverage_note": "観点ごとの確認状況を下に示します。未確認や未記録の観点は確認していません。"
                          "検出事項がゼロでも、データが壊れない・失われない・ロックされないことの保証にはなりません。",
         "limitations_count": "記録された制約",
         "limitations_empty": "制約事項が記録されていません。すべて確認済みであることを示すものではありません。",
@@ -768,7 +795,7 @@ def console_model(doc, lang):
         if "analysis" in f:
             notes.append(f"{t['analysis']}: {as_text(f['analysis']['result'])}")
         where = [{"label": t["location"], "value": ", ".join(as_locations(f["location"])), "mono": True},
-                 {"label": t["category"], "value": as_text(category(f))}]
+                 {"label": t["category"], "value": as_text(category(f, lang))}]
         where += [{"label": t[k], "value": as_text(field_text(f, k, lang))} for k in WHERE[1:] if filled(f, k)]
         findings.append({
             "id": f["id"], "severity": f["severity"], "status": f.get("status", "Open"),
@@ -793,7 +820,8 @@ def console_model(doc, lang):
             tone = "ink"
         else:
             tone = "accent" if matched else "muted"
-        perspectives.append({"name": name, "result": as_text(p["status"]), "note": as_text(p["note"]),
+        perspectives.append({"name": perspective_name(name, lang),
+                             "result": as_text(perspective_status(p["status"], lang)), "note": as_text(p["note"]),
                              "tone": tone, "on": bool(opened)})
     labels = {key[3:]: value for key, value in d.items() if key.startswith("cx_")}
     labels.update(copied=d["copied"], copy_failed=d["copy_failed"], fix_missing=d["missing_fix"],
@@ -859,7 +887,7 @@ def finding_markdown(f, lang):
     for label, value in (("severity", f["severity"]), ("rollout", f["rollout"]),
                          ("effort", f["effort"]), ("confidence", f["confidence"]),
                          ("verdict", f"{v['verdict']} ({v['method']})"),
-                         ("status", f.get("status", "Open")), ("category", category(f)),
+                         ("status", f.get("status", "Open")), ("category", category(f, lang)),
                          ("remedy", f"{f['remedy']} ({f['hazard']})"),
                          ("location", ", ".join(as_locations(f["location"])))):
         out.append(f"- {DASH[lang].get(label, t.get(label))}: {one(value)}")
@@ -914,7 +942,7 @@ def bullet_list(items, empty):
 def render_html(doc, lang):
     t, d = LABELS[lang], DASH[lang]
     e = html_text
-    # Severity, rollout, status, verdict and perspective names stay English on the
+    # Severity, rollout, finding status and verdict stay English on the
     # Japanese page; badges, register cells, filters and charts mark them so a
     # screen reader reads them in English (WCAG 3.1.2).
     en = " lang='en'" if lang != "en" else ""
@@ -1065,7 +1093,8 @@ def render_html(doc, lang):
                f"<table class='coverage-table'><thead><tr><th>{e(t['perspective'])}</th>"
                f"<th>{e(t['rule_status'])}</th><th>{e(t['note'])}</th></tr></thead><tbody>")
     for name, p in rows:
-        out.append(f"<tr><td{en}>{e(name)}</td><td{en}>{e(p['status'])}</td><td>{e(p['note'])}</td></tr>")
+        out.append(f"<tr><td>{e(perspective_name(name, lang))}</td>"
+                   f"<td>{e(perspective_status(p['status'], lang))}</td><td>{e(p['note'])}</td></tr>")
     out.append("</tbody></table></div></section>")
 
     scales, closing = legend(doc, lang)
@@ -1107,12 +1136,13 @@ def render_html(doc, lang):
         out.append("</tbody></table></div></section>")
 
     cats = sorted(tally(included, lambda f: f["category"]).items(), key=lambda kv: (-kv[1], kv[0]))
+    category_counts = {perspective_name(name, lang): count for name, count in cats}
     out.append(f"<section class='panel' id='charts' tabindex='-1'><h2>{e(d['overview'])}</h2><p class='section-note'>"
                f"{e(d['count_basis'])}</p><div class='grid'>"
                f"<div><h3>{e(d['by_sev'])}</h3>{bars(SEVERITIES, by_sev, True, en)}</div>"
                f"<div><h3>{e(d['by_rollout'])}</h3>{bars(ROLLOUTS, tally(included, lambda f: f['rollout']), lang_attr=en)}</div>"
                f"<div><h3>{e(d['by_conf'])}</h3>{bars(CONFIDENCES, tally(included, lambda f: f['confidence']), lang_attr=en)}</div>"
-               f"<div><h3>{e(d['by_cat'])}</h3>{bars([k for k, _ in cats], dict(cats), lang_attr=en)}</div>"
+               f"<div><h3>{e(d['by_cat'])}</h3>{bars(list(category_counts), category_counts)}</div>"
                f"<div><h3>{e(d['by_status'])}</h3>{bars(STATUSES, tally(included, lambda f: status[f['id']]), lang_attr=en)}</div>"
                f"<div><h3>{e(d['by_verdict'])}</h3>{bars(VERDICTS, verdict_counts(findings), lang_attr=en)}"
                f"<p class='section-note'>{ui(d['excluded_note'])}</p></div></div></section>")
@@ -1138,7 +1168,7 @@ def render_html(doc, lang):
             f"<label><span>{e(d['confidence'])}</span><select id='f-conf'>"
             + options([(c, c) for c in CONFIDENCES], t["all"], en) + "</select></label>"
             f"<label><span>{e(d['category'])}</span><select id='f-cat'>"
-            + options([(c, c) for c in all_cats], t["all"], en) + "</select></label>"
+            + options([(c, perspective_name(c, lang)) for c in all_cats], t["all"]) + "</select></label>"
             f"<label><span>{e(d['status'])}</span><select id='f-status'>"
             + options([(s, s) for s in STATUSES], t["all"], en) + "</select></label>"
             f"<label><span>{e(d['verdict'])}</span><select id='f-verdict' data-excluded='{excluded_values}'>"
@@ -1176,7 +1206,7 @@ def render_html(doc, lang):
         def word(text):  # fixed English vocabulary
             return f"<span{en}>{e(text)}</span>" if en else e(text)
 
-        fields = [(t["category"], word(category(f))),
+        fields = [(t["category"], e(category(f, lang))),
                   (d["rollout"], f"{word(f['rollout'])} · {e(d['effort'])} {word(f['effort'])} · "
                               f"{word(f['confidence'])}")]
         def value(k):
@@ -1227,7 +1257,8 @@ def render_html(doc, lang):
             f"<span class='reg-title'><span>{e(f['title'])}</span>{locations}"
             f"<span class='toggle-label' aria-hidden='true'><span class='closed-label'>{e(d['expand'])}</span>"
             f"<span class='open-label'>{e(d['collapse'])}</span></span></span>"
-            f"<span class='reg-meta reg-cat'>{column(d['category'])}<span{en}>{e(f['category'])}</span></span>"
+            f"<span class='reg-meta reg-cat'>{column(d['category'])}"
+            f"<span>{e(perspective_name(f['category'], lang))}</span></span>"
             f"</summary><div class='detail'><div class='detail-actions'><strong>{e(f['id'])} · {e(f['title'])}</strong>"
             f"<span class='detail-links'><button type='button' class='copy-finding' data-js hidden "
             f"data-copy='{escape(f['id'])}' aria-live='polite'>{e(d['copy_llm'])}</button>"

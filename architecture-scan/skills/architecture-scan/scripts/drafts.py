@@ -38,7 +38,7 @@ from findings import (EXCLUDED, FINDING_ID, SEVERITIES, SchemaError,  # noqa: E4
                       template_counts, validate)
 from render import (DIAGRAMS, LABELS, block_safe, diagram_change_items, diagram_changes,  # noqa: E402
                     filled, markdown_code, markdown_inline, markdown_reference, mermaid,
-                    revision, review_method, rule_statement)
+                    perspective_name, revision, review_method, rule_statement)
 
 TEMPLATES = Path(__file__).resolve().parent.parent / "templates"
 CLOSED = ("Fixed", "Accepted")
@@ -157,7 +157,7 @@ def finding_values(f, doc, lang):
     values = {
         "id": inline(f["id"]), "severity": f["severity"], "title": inline(f["title"]),
         "confidence": f["confidence"], "validation.verdict": v["verdict"],
-        "validation.method": v["method"], "category": inline(f["category"]),
+        "validation.method": v["method"], "category": inline(perspective_name(f["category"], lang)),
         "step": inline(f["step"]) if filled(f, "step") else None,
         "location": SEP[lang].join(markdown_code(loc) for loc in as_locations(f["location"])),
         "meta.commit": inline(revision(meta)), "meta.date": inline(meta["date"]),

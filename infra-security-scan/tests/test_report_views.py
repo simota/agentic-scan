@@ -69,9 +69,28 @@ class ReportViewTest(unittest.TestCase):
     def test_japanese_pages_translate_perspectives_and_inputs(self):
         dash, report = pages(SAMPLE_JA, "ja")
         for name in render.perspective_names():
-            if name != "Kubernetes":
-                self.assertNotIn(f">{name}<", dash + report, name)
+            self.assertNotIn(f">{name}<", dash + report, name)
+            self.assertIn(f">{render.DISPLAY['ja'][name]}<", dash + report, name)
+        for status in render.P_STATUSES:
+            self.assertNotIn(f">{status}<", dash + report, status)
+        self.assertIn(">適用<", dash + report)
         self.assertIn("プラン JSON:", report)
+
+    def test_japanese_names_cover_every_perspective_and_status(self):
+        ja = render.DISPLAY["ja"]
+        for name in render.perspective_names():
+            self.assertIn(name, ja, name)
+            self.assertRegex(ja[name], r"[぀-ヿ一-鿿]", name)
+        self.assertEqual([ja[s] for s in render.P_STATUSES], ["適用", "該当なし", "未確認"])
+
+    def test_english_pages_keep_perspective_names_and_statuses(self):
+        dash, report = pages(SAMPLE, "en")
+        for name in render.perspective_names():
+            self.assertIn(f">{name}<", dash + report, name)
+        for status in render.P_STATUSES:
+            self.assertIn(f">{status}<", dash + report, status)
+        for ja_word in ("適用", "該当なし", "未確認", "Kubernetes クラスタ"):
+            self.assertNotIn(ja_word, dash + report, ja_word)
 
     def test_dashboard_shows_scope_inventory_and_links_reveal_rows(self):
         dash, _ = pages(SAMPLE, "en")

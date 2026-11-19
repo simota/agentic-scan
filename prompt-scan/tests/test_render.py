@@ -9,7 +9,7 @@ import time
 import unittest
 from unittest import mock
 
-from helpers import EXAMPLES, SAMPLE_APP, SCRIPTS, clone, excerpt, record, render, run, sample, write_json
+from helpers import EXAMPLES, SAMPLE_APP, SCRIPTS, clone, contract_check, excerpt, record, render, run, sample, write_json
 
 
 class RenderTest(unittest.TestCase):
@@ -434,6 +434,79 @@ class RenderTest(unittest.TestCase):
             with self.assertRaises(render.SchemaError) as ctx:
                 record.validate_data(data)
             self.assertIn(message, str(ctx.exception))
+
+    def test_perspective_ja_names_cover_every_perspective(self):
+        canonical = contract_check.perspective_names()
+        mapping = render.PERSPECTIVE_NAMES_JA
+        self.assertEqual(set(mapping), set(canonical))
+        for en, ja in mapping.items():
+            self.assertTrue(ja.strip(), en)
+            self.assertFalse(ja.isascii(), f"{en!r} -> {ja!r} must not be ASCII-only")
+        self.assertEqual(render.LABELS["ja"]["perspective_names"], mapping)
+        self.assertNotIn("perspective_names", render.LABELS["en"])
+
+    def test_japanese_render_localizes_perspectives_everywhere(self):
+        data = sample("ja")
+        out = self.render(data, "--lang", "ja", "--repo", SAMPLE_APP)
+        report = (out / "report.html").read_text(encoding="utf-8")
+        dashboard = (out / "dashboard.html").read_text(encoding="utf-8")
+        payload = json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>',
+                                       dashboard, re.S).group(1))
+        mapping = render.PERSPECTIVE_NAMES_JA
+        canonical = contract_check.perspective_names()
+
+        persp_section = re.search(r'<section id="perspectives">(.*?)</section>', report, re.S)
+        self.assertIsNotNone(persp_section)
+        for en in canonical:
+            ja = mapping[en]
+            self.assertIn(f"<td>{render.esc(ja)}</td>", persp_section.group(1))
+            self.assertNotIn(f"<td>{render.esc(en)}</td>", persp_section.group(1))
+
+        finding_persps = re.findall(r'<tr><th scope="row">観点</th><td>(.*?)</td></tr>', report)
+        self.assertEqual(len(finding_persps), len(data["findings"]))
+        for text in finding_persps:
+            self.assertIn(text, mapping.values())
+            self.assertFalse(text.isascii(), text)
+
+        for key in ("perspectives",):
+            names = [p["name"] for p in payload[key]]
+            self.assertEqual(names, [mapping[p["name"]] for p in data["perspectives"]])
+            self.assertTrue(all(not n.isascii() for n in names))
+        console_names = [p["name"] for p in payload["console"]["perspectives"]]
+        self.assertEqual(console_names, [mapping[p["name"]] for p in data["perspectives"]])
+        self.assertTrue(all(not n.isascii() for n in console_names))
+        for item in payload["console"]["findings"]:
+            persp_row = next(w for w in item["where"] if w["label"] == "観点")
+            self.assertIn(persp_row["value"], mapping.values())
+            self.assertFalse(persp_row["value"].isascii())
+
+    def test_english_render_keeps_english_perspectives_unchanged(self):
+        data = sample("en")
+        out = self.render(data, "--lang", "en", "--repo", SAMPLE_APP)
+        report = (out / "report.html").read_text(encoding="utf-8")
+        dashboard = (out / "dashboard.html").read_text(encoding="utf-8")
+        payload = json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>',
+                                       dashboard, re.S).group(1))
+        canonical = contract_check.perspective_names()
+
+        persp_section = re.search(r'<section id="perspectives">(.*?)</section>', report, re.S)
+        self.assertIsNotNone(persp_section)
+        for en in canonical:
+            self.assertIn(f"<td>{render.esc(en)}</td>", persp_section.group(1))
+            self.assertNotIn(render.PERSPECTIVE_NAMES_JA[en], report)
+
+        finding_persps = re.findall(r'<tr><th scope="row">Perspective</th><td>(.*?)</td></tr>', report)
+        self.assertEqual(len(finding_persps), len(data["findings"]))
+        self.assertTrue(all(text in canonical for text in finding_persps))
+
+        expected_names = [p["name"] for p in data["perspectives"]]
+        self.assertEqual([p["name"] for p in payload["perspectives"]], expected_names)
+        self.assertEqual([p["name"] for p in payload["console"]["perspectives"]], expected_names)
+        self.assertNotIn("perspective_names", payload["labels"])
+        by_id = {f["id"]: f for f in data["findings"]}
+        for item in payload["console"]["findings"]:
+            persp_row = next(w for w in item["where"] if w["label"] == "Perspective")
+            self.assertEqual(persp_row["value"], by_id[item["id"]]["category"])
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import diagrams  # noqa: E402
-from common import EXCLUDED, VERDICTS, RecordError, as_list, closed, excluded, load_json, pattern_name  # noqa: E402
+from common import EXCLUDED, VERDICTS, RecordError, as_list, closed, excluded, load_json, pattern_name, perspective_status  # noqa: E402
 from findings import reference_errors, shape_errors  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 
@@ -136,7 +136,7 @@ def common_finding(finding, record, surfaces, t, lang):
 def to_common(record, surfaces, lang):
     t = TEXT[lang]
     meta = record["meta"]
-    perspectives = [dict(name=f"{p['name']} {pattern_name(p['name'], lang)}", result=p["status"], note=p.get("note", "")) for p in record.get("perspectives", [])]
+    perspectives = [dict(name=f"{p['name']} {pattern_name(p['name'], lang)}", result=perspective_status(p["status"], lang), note=p.get("note", "")) for p in record.get("perspectives", [])]
     data = dict(format=report.FORMAT,
                 meta={k: meta[k] for k in ("project", "date", "assessor", "scope", "method", "commit") if meta.get(k)},
                 report=dict(kind=t["kind"], title=t["title"], dashboard_title=t["dashboard_title"], running_footer=t["footer"]),

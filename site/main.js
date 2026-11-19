@@ -1,5 +1,11 @@
 // Progressive enhancement only: the page reads fully without this file.
+const TEXT = {
+  en: { copy: "Copy", copied: "Copied", toast: "Command copied", failed: "Couldn't copy. Select the text and copy it." },
+  ja: { copy: "コピー", copied: "コピー済み", toast: "コマンドをコピーしました", failed: "コピーできませんでした。選択してコピーしてください" },
+};
+
 document.addEventListener("DOMContentLoaded", () => {
+  const t = TEXT[document.documentElement.lang] || TEXT.en;
   const toast = document.querySelector(".toast");
   let toastTimer;
   const say = (text) => {
@@ -14,11 +20,11 @@ document.addEventListener("DOMContentLoaded", () => {
     button.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(button.dataset.copy);
-        button.textContent = "コピー済み";
-        say("コマンドをコピーしました");
-        setTimeout(() => (button.textContent = "コピー"), 1800);
+        button.textContent = t.copied;
+        say(t.toast);
+        setTimeout(() => (button.textContent = t.copy), 1800);
       } catch {
-        say("コピーできませんでした。選択してコピーしてください");
+        say(t.failed);
       }
     });
   });

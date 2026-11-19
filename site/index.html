@@ -1,26 +1,29 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>agentic-scan — AI エージェントのための読み取り専用レビュースキル 12 種</title>
-<meta name="description" content="Claude Code・Codex・Antigravity のエージェントがリポジトリを読み、セキュリティから UX まで 12 の観点で診断します。指摘ごとにファイルと行、検証の判定、修正方針がつきます。コードは書き換えません。">
+<title>agentic-scan — 12 read-only review skills for AI agents</title>
+<meta name="description" content="Agents in Claude Code, Codex and Antigravity read your repository and review it from 12 angles, from security to UX. Every finding comes with a file and line, a verification verdict and a fix direction. Your code is never rewritten.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="agentic-scan — 読み取り専用のレビュースキル 12 種">
-<meta property="og:description" content="エージェントがリポジトリを読み、12 の観点で診断。どの指摘にもファイルと行、検証の判定がつきます。">
+<meta property="og:title" content="agentic-scan — 12 read-only review skills">
+<meta property="og:description" content="Agents read your repository and review it from 12 angles. Every finding comes with a file and line and a verification verdict.">
 <meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0f1217" media="(prefers-color-scheme: dark)">
+<link rel="alternate" hreflang="en" href="./">
+<link rel="alternate" hreflang="ja" href="ja/">
+<link rel="alternate" hreflang="x-default" href="./">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="styles.css">
 <script src="main.js" defer></script>
 </head>
 <body>
-<a class="skip" href="#main">本文へ移動</a>
+<a class="skip" href="#main">Skip to content</a>
 
 <header class="bar">
   <div class="wrap bar-inner">
     <a class="wordmark" href="#top"><span class="perm" aria-hidden="true">r--</span>agentic-scan</a>
-    <nav aria-label="ページ内">
+    <nav aria-label="On this page">
       <ul class="nav">
         <li><a href="#skills">skills</a></li>
         <li><a href="#verify">verify</a></li>
@@ -28,7 +31,8 @@
         <li><a href="#faq">faq</a></li>
       </ul>
     </nav>
-    <a class="btn btn-quiet" href="#install">導入する</a>
+    <a class="lang" href="ja/" hreflang="ja" lang="ja">日本語</a>
+    <a class="btn btn-quiet" href="#install">Install</a>
   </div>
 </header>
 
@@ -38,29 +42,26 @@
   <div class="wrap hero-grid">
     <div class="hero-copy">
       <p class="kicker"><span>12 review skills for</span> <span>Claude Code · Codex · Antigravity</span></p>
-      <h1 id="hero-title"><span class="ph">コードに触れずに、</span><span class="ph">裏の取れた指摘を。</span></h1>
-      <p class="lead">agentic-scan は、AI エージェントがあなたのリポジトリを読んで診断するための 12 のスキルです。セキュリティから UX まで、どの指摘にも<strong>ファイルと行</strong>と<strong>検証の判定</strong>がつきます。</p>
+      <h1 id="hero-title"><span class="ph">Findings you can check,</span><span class="ph">without touching your code.</span></h1>
+      <p class="lead">agentic-scan is 12 skills that let an AI agent read your repository and review it. From security to UX, every finding comes with a <strong>file and line</strong> and a <strong>verification verdict</strong>.</p>
       <div class="cta-row">
-        <a class="btn" href="#install">導入手順を見る</a>
-        <a class="link" href="#output">出力サンプルへ</a>
+        <a class="btn" href="#install">See the install steps</a>
+        <a class="link" href="#output">See sample output</a>
       </div>
       <p class="spec"><span>12 skills</span><span>read-only</span><span>dashboard + report</span></p>
     </div>
 
     <figure class="term term-hero" aria-labelledby="hero-term-cap">
-      <figcaption class="term-head" id="hero-term-cap"><span>security-scan の同梱サンプル</span><span class="dim">架空の注文管理アプリ · 7 件</span></figcaption>
-      <div class="term-body" tabindex="0" role="region" aria-label="コマンドと出力。横にスクロールできます">
-<pre class="cmd"><span class="ps" aria-hidden="true">$ </span>jq -r '.findings[] | [.id, .severity, .validation.verdict, .location] | @tsv' \
-    security-scan/examples/findings.sample.ja.json | column -t</pre>
+      <figcaption class="term-head" id="hero-term-cap"><span>security-scan bundled sample</span><span class="dim">fictional app · 4 findings</span></figcaption>
+      <div class="term-body" tabindex="0" role="region" aria-label="Command and output. Scrolls horizontally">
+<pre class="cmd"><span class="ps" aria-hidden="true">$ </span>jq -r '.findings[] | [.id, .severity, (.validation.verdict // "-"), .location] | @tsv' \
+    security-scan/examples/findings.sample.json | column -t</pre>
 <pre class="out"><span class="ln">F-001  <b class="s-high">High</b>    <b class="v-ok">Valid</b>          src/api/orders.py:42</span>
-<span class="ln">D-001  <b class="s-high">High</b>    Unverified     package-lock.json:18</span>
-<span class="ln">F-002  <b class="s-med">Medium</b>  Likely         src/api/pagination.py:7</span>
-<span class="ln">F-003  <b class="s-low">Low</b>     Unverified     deploy/php.ini:9</span>
-<span class="ln ln-mark">F-004  <b class="s-high">High</b>    <b class="v-fp">FalsePositive</b>  src/api/reports.py:88</span>
-<span class="ln">F-005  <b class="s-low">Low</b>     <b class="v-ok">Valid</b>          src/api/middleware.py:23</span>
-<span class="ln">F-006  <b class="s-info">Info</b>    Unverified     docs/logging.md:12</span></pre>
+<span class="ln">F-002  <b class="s-med">Medium</b>  Likely         src/api/util.py:7</span>
+<span class="ln">F-003  <b class="s-low">Low</b>     -              deploy/php.ini:9</span>
+<span class="ln ln-mark">F-004  <b class="s-high">High</b>    <b class="v-fp">FalsePositive</b>  src/api/reports.py:88</span></pre>
       </div>
-      <p class="term-note"><b class="v-fp">F-004</b> は、検証で誤検知と判定された指摘です。消されずに、根拠つきで記録に残ります。<span class="quote">「SQL 断片は固定の列名リストだけから構築されます。リクエスト値が断片に入る経路はありません。」</span></p>
+      <p class="term-note"><b class="v-fp">F-004</b> was judged a false positive during verification. It is not deleted; it stays in the record with its evidence. <span class="quote">“The fragment is built only from a fixed allowlist of column names (src/api/reports.py:70-76); no request value reaches it”</span></p>
     </figure>
   </div>
 </section>
@@ -68,13 +69,13 @@
 <section class="sect" id="skills" aria-labelledby="skills-title">
   <div class="wrap">
     <header class="sect-head">
-      <h2 id="skills-title">観点ごとに、別のスキル。</h2>
-      <p>どのスキルも一つの観点だけを受け持ち、それぞれ自分の手順で進みます。添えた指摘は、各スキルに同梱されたサンプルデータ(すべて架空のアプリ)から引いたものです。</p>
+      <h2 id="skills-title">One skill per angle.</h2>
+      <p>Each skill covers a single angle and follows its own steps. The finding next to each one comes from the sample data bundled with that skill (all fictional apps).</p>
     </header>
 
     <div class="skills-grid">
       <figure class="term term-index" aria-labelledby="index-cap">
-        <figcaption class="term-head" id="index-cap"><span>リポジトリの直下で</span></figcaption>
+        <figcaption class="term-head" id="index-cap"><span>At the repository root</span></figcaption>
         <div class="term-body">
 <pre class="cmd"><span class="ps" aria-hidden="true">$ </span>make list</pre>
 <pre class="out index"><a href="#s-architecture">architecture-scan</a>
@@ -93,18 +94,18 @@
       </figure>
 
       <ol class="skills">
-        <li id="s-architecture"><h3>architecture-scan</h3><p class="what">モジュールの境界と依存、データの持ち主、障害時の振る舞い、運用のしやすさ。</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> Refund job writes invoices directly, skipping billing's tax rules</p></li>
-        <li id="s-bug"><h3>bug-scan</h3><p class="what">git 履歴からバグの入り口を分類し、同じ入り口が今のコードに残っていないかを探す。</p><p class="pipe">RECON → CATALOG → HISTORY → TRIAGE → REVIEW → VERIFY → RECONCILE → REPORT</p><p class="eg"><b class="s-high">High</b> ゼロ幅空白のクーポンで注文が確定する</p></li>
-        <li id="s-data"><h3>data-integrity-scan</h3><p class="what">制約の欠落、危険なマイグレーション、トランザクションの抜け、更新の消失。</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► PLAN ─► REPORT</p><p class="eg"><b class="s-med">Medium</b> Wallet debit reads the balance and writes it back without a lock</p></li>
-        <li id="s-infra"><h3>infra-security-scan</h3><p class="what">Terraform・CloudFormation・Kubernetes の設定から、露出と権限、攻撃経路。クラウドの API は呼びません。</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> 顧客エクスポート用バケットが allUsers に公開されている</p></li>
-        <li id="s-logic"><h3>logic-scan</h3><p class="what">料金・税・期限・状態遷移など、業務ルールの誤り。指摘ごとに反例がつきます。</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► PLAN ─► REPORT</p><p class="eg"><b class="s-high">High</b> The invoice rounds tax per line while the charge rounds it once, so the card is charged a different amount</p></li>
-        <li id="s-performance"><h3>performance-scan</h3><p class="what">N+1 や上限のないクエリ、インデックス、ブロッキング I/O、キャッシュ、バンドル。</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> Order list lazy-loads items per order and products per item (N+1)</p></li>
-        <li id="s-privacy"><h3>privacy-scan</h3><p class="what">個人データの流れ、同意、保存期間と削除、第三者への提供、ログ。法的な見解ではありません。</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> Analytics SDK initialises before consent</p></li>
-        <li id="s-prompt"><h3>prompt-scan</h3><p class="what">LLM のプロンプトと、それを組み立てて解析するコード。変数の抜け、矛盾、出力形式のずれ。</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> テンプレート変数 context が一度も埋められていない</p></li>
-        <li id="s-prune"><h3>prune-scan</h3><p class="what">役目を終えたコード、機能、フラグ、依存、設定。消してよいものと、その順番。</p><p class="pipe">RECON → UNITS → CHECKLIST → REVIEW → VERIFY → REPORT</p><p class="eg"><b class="s-high">High</b> 認証なしの /debug/dump がシークレットを含む設定全体を返す</p></li>
-        <li id="s-security"><h3>security-scan</h3><p class="what">認証・認可、テナント越えのアクセス、インジェクション、秘密情報、依存パッケージ。</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> 注文詳細 API に所有者の確認がない</p></li>
-        <li id="s-testgap"><h3>test-gap-scan</h3><p class="what">テストをすり抜ける欠陥。弱いアサーション、実物と違うモック、CI で動かないテスト。</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► PLAN ─► REPORT</p><p class="eg"><b class="s-med">Medium</b> The shared gateway mock accepts any amount the real gateway refuses</p></li>
-        <li id="s-ux"><h3>ux-scan</h3><p class="what">画面と主要な操作の流れ、状態、フォーム、アクセシビリティ、マイクロコピー。</p><p class="pipe">RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT</p><p class="eg"><b class="s-high">High</b> 新しいタスクを保存すると入力したタイトルが捨てられる</p></li>
+        <li id="s-architecture"><h3>architecture-scan</h3><p class="what">Module boundaries and dependencies, data ownership, behaviour under failure, ease of operation.</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> Refund job writes invoices directly, skipping billing's tax rules</p></li>
+        <li id="s-bug"><h3>bug-scan</h3><p class="what">Classifies how bugs got in from git history, then looks for the same entry points still in today's code.</p><p class="pipe">RECON → CATALOG → HISTORY → TRIAGE → REVIEW → VERIFY → RECONCILE → REPORT</p><p class="eg"><b class="s-high">High</b> An order is placed with a zero-width-space coupon</p></li>
+        <li id="s-data"><h3>data-integrity-scan</h3><p class="what">Missing constraints, unsafe migrations, transaction gaps, lost updates.</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► PLAN ─► REPORT</p><p class="eg"><b class="s-med">Medium</b> Wallet debit reads the balance and writes it back without a lock</p></li>
+        <li id="s-infra"><h3>infra-security-scan</h3><p class="what">Exposure, permissions and attack paths, read from Terraform, CloudFormation and Kubernetes config. Never calls cloud APIs.</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> Customer export bucket is readable by allUsers</p></li>
+        <li id="s-logic"><h3>logic-scan</h3><p class="what">Errors in business rules such as pricing, tax, deadlines and state transitions. Every finding comes with a counterexample.</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► PLAN ─► REPORT</p><p class="eg"><b class="s-high">High</b> The invoice rounds tax per line while the charge rounds it once, so the card is charged a different amount</p></li>
+        <li id="s-performance"><h3>performance-scan</h3><p class="what">N+1 and unbounded queries, indexes, blocking I/O, caching, bundles.</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> Order list lazy-loads items per order and products per item (N+1)</p></li>
+        <li id="s-privacy"><h3>privacy-scan</h3><p class="what">How personal data flows, consent, retention and deletion, sharing with third parties, logs. Not legal advice.</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> Analytics SDK initialises before consent</p></li>
+        <li id="s-prompt"><h3>prompt-scan</h3><p class="what">LLM prompts and the code that assembles and parses them. Missing variables, contradictions, output contracts that drift.</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> Template variable context is never filled</p></li>
+        <li id="s-prune"><h3>prune-scan</h3><p class="what">Code, features, flags, dependencies and config that no longer earn their place. What can go, and in what order.</p><p class="pipe">RECON → UNITS → CHECKLIST → REVIEW → VERIFY → REPORT</p><p class="eg"><b class="s-high">High</b> Unauthenticated /debug/dump returns the whole app config, secrets included</p></li>
+        <li id="s-security"><h3>security-scan</h3><p class="what">Authentication and authorisation, cross-tenant access, injection, secrets, dependency packages.</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT</p><p class="eg"><b class="s-high">High</b> Detail endpoint lacks ownership check</p></li>
+        <li id="s-testgap"><h3>test-gap-scan</h3><p class="what">Defects that slip past the tests: weak assertions, mocks that differ from the real thing, tests CI never runs.</p><p class="pipe">RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► PLAN ─► REPORT</p><p class="eg"><b class="s-med">Medium</b> The shared gateway mock accepts any amount the real gateway refuses</p></li>
+        <li id="s-ux"><h3>ux-scan</h3><p class="what">Screens and primary flows, states, forms, accessibility, microcopy.</p><p class="pipe">RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT</p><p class="eg"><b class="s-high">High</b> Saving a new task discards the typed title</p></li>
       </ol>
     </div>
   </div>
@@ -113,14 +114,14 @@
 <section class="sect sect-verify" id="verify" aria-labelledby="verify-title">
   <div class="wrap">
     <header class="sect-head">
-      <h2 id="verify-title">読んで、反証してから、渡す。</h2>
-      <p>工程はスキルごとに違っても、決まりは同じです。</p>
+      <h2 id="verify-title">Read it, try to disprove it, then hand it over.</h2>
+      <p>The steps differ from skill to skill; the rules are the same.</p>
     </header>
     <dl class="rules">
-      <div><dt>read-only</dt><dd><strong>既定では何も書き換えません。</strong>コードを編集せず、デプロイ済みのシステムに通信も送りません。テストの追加や使い捨ての DB での試行は、明示的に頼んで許可したときだけです。</dd></div>
-      <div><dt>verify</dt><dd><strong>指摘には判定がつきます。</strong>経路をたどり直して、成り立つか(Valid)、まだ確かめられないか(Unverified)、誤検知か(FalsePositive)を根拠とともに記録します。</dd></div>
-      <div><dt>keep</dt><dd><strong>誤りと判定した指摘も消しません。</strong>FalsePositive や NotApplicable として根拠つきで残し、何を除外したかが見えるようにします。</dd></div>
-      <div><dt>decide</dt><dd><strong>決めるのは人です。</strong>受け入れるリスクや優先順位は、ダッシュボードの「判断が必要な事項」として分けて渡します。</dd></div>
+      <div><dt>read-only</dt><dd><strong>Nothing is rewritten by default.</strong> No code is edited and no traffic is sent to deployed systems. Adding tests or trying things on a throwaway database happens only when you explicitly ask for it and allow it.</dd></div>
+      <div><dt>verify</dt><dd><strong>Every finding gets a verdict.</strong> The path is traced again and the finding is recorded, with evidence, as holding (Valid), not yet confirmable (Unverified) or a false positive (FalsePositive).</dd></div>
+      <div><dt>keep</dt><dd><strong>Findings judged wrong are not deleted.</strong> They stay as FalsePositive or NotApplicable with their evidence, so you can see what was excluded.</dd></div>
+      <div><dt>decide</dt><dd><strong>People make the call.</strong> Which risks to accept and what comes first are handed over separately, as the dashboard's decisions that need your judgment.</dd></div>
     </dl>
   </div>
 </section>
@@ -128,35 +129,35 @@
 <section class="sect" id="output" aria-labelledby="output-title">
   <div class="wrap">
     <header class="sect-head">
-      <h2 id="output-title">結果は、一枚で開けるダッシュボードに。</h2>
-      <p>単体の HTML なのでオフラインのまま開けます。記録は <code>findings.json</code> に残り、再スキャンとの比較や SARIF への書き出しにも使えます。以下は各スキルの <code>make demo</code> で生成した実際の画面です。</p>
+      <h2 id="output-title">Results in one dashboard you can open anywhere.</h2>
+      <p>It is a single HTML file, so it opens offline. The record stays in <code>findings.json</code>, ready for comparing with a re-scan or exporting to SARIF. Below are real screens generated by each skill's <code>make demo</code>.</p>
     </header>
 
     <div class="tabs" data-tabs>
-      <div class="tablist" role="tablist" aria-label="出力サンプル">
+      <div class="tablist" role="tablist" aria-label="Sample output">
         <button role="tab" id="tab-sec" aria-controls="panel-sec" aria-selected="true">security-scan</button>
         <button role="tab" id="tab-ux" aria-controls="panel-ux" aria-selected="false" tabindex="-1">ux-scan</button>
         <button role="tab" id="tab-arch" aria-controls="panel-arch" aria-selected="false" tabindex="-1">architecture-scan</button>
         <button role="tab" id="tab-prompt" aria-controls="panel-prompt" aria-selected="false" tabindex="-1">prompt-scan</button>
       </div>
       <div class="panel" role="tabpanel" id="panel-sec" aria-labelledby="tab-sec">
-        <figure><div class="shot"><picture><source media="(max-width: 700px)" srcset="assets/security-scan-m.webp" width="780" height="1280"><img loading="lazy" src="assets/security-scan.webp" srcset="assets/security-scan.webp 1280w, assets/security-scan@2x.webp 2560w" sizes="(min-width: 1200px) 1120px, 92vw" width="1280" height="800" alt="security-scan のダッシュボード。未解決・対応済み・除外の件数を出す帯、1 件 1 マスの重大度タイル、判定と観点のパネル"></picture></div><figcaption>未検証の High を帯の一行目で知らせ、件数を未解決・対応済み・除外に分ける。架空の注文管理アプリの例。</figcaption></figure>
+        <figure><div class="shot"><picture><source media="(max-width: 700px)" srcset="assets/en/security-scan-m.webp" width="780" height="1280"><img loading="lazy" src="assets/en/security-scan.webp" srcset="assets/en/security-scan.webp 1280w, assets/en/security-scan@2x.webp 2560w" sizes="(min-width: 1200px) 1120px, 92vw" width="1280" height="800" alt="security-scan dashboard: a band with open, closed and excluded counts, severity tiles with one cell per finding, and the verdict and perspective panels"></picture></div><figcaption>The band's first line reports unverified findings and verdicts that lack evidence, and splits the counts into open, closed and excluded. A fictional sample app.</figcaption></figure>
       </div>
       <div class="panel" role="tabpanel" id="panel-ux" aria-labelledby="tab-ux">
-        <figure><div class="shot"><picture><source media="(max-width: 700px)" srcset="assets/ux-scan-m.webp" width="780" height="1280"><img loading="lazy" src="assets/ux-scan.webp" srcset="assets/ux-scan.webp 1280w, assets/ux-scan@2x.webp 2560w" sizes="(min-width: 1200px) 1120px, 92vw" width="1280" height="800" alt="ux-scan のダッシュボード。未解決・対応済み・除外の件数を出す帯、1 件 1 マスの重大度タイル、判定と観点のパネル"></picture></div><figcaption>対応が必要な High・Medium の件数を帯で示し、重大度ごとに 1 件 1 マスで並べる。架空のタスク管理アプリの例。</figcaption></figure>
+        <figure><div class="shot"><picture><source media="(max-width: 700px)" srcset="assets/en/ux-scan-m.webp" width="780" height="1280"><img loading="lazy" src="assets/en/ux-scan.webp" srcset="assets/en/ux-scan.webp 1280w, assets/en/ux-scan@2x.webp 2560w" sizes="(min-width: 1200px) 1120px, 92vw" width="1280" height="800" alt="ux-scan dashboard: a band with open, closed and excluded counts, severity tiles with one cell per finding, and the verdict and perspective panels"></picture></div><figcaption>The band counts the High and Medium findings that need attention, and each severity shows one cell per finding. A fictional task manager.</figcaption></figure>
       </div>
       <div class="panel" role="tabpanel" id="panel-arch" aria-labelledby="tab-arch">
-        <figure><div class="shot"><picture><source media="(max-width: 700px)" srcset="assets/architecture-scan-m.webp" width="780" height="1280"><img loading="lazy" src="assets/architecture-scan.webp" srcset="assets/architecture-scan.webp 1280w, assets/architecture-scan@2x.webp 2560w" sizes="(min-width: 1200px) 1120px, 92vw" width="1280" height="800" alt="architecture-scan のダッシュボード。未解決・対応済み・除外の件数を出す帯、1 件 1 マスの重大度タイル、判定と観点のパネル"></picture></div><figcaption>未対応の High / Medium の件数と、重大度ごとの指摘 ID を最初の画面に並べる。架空のショップの例。</figcaption></figure>
+        <figure><div class="shot"><picture><source media="(max-width: 700px)" srcset="assets/en/architecture-scan-m.webp" width="780" height="1280"><img loading="lazy" src="assets/en/architecture-scan.webp" srcset="assets/en/architecture-scan.webp 1280w, assets/en/architecture-scan@2x.webp 2560w" sizes="(min-width: 1200px) 1120px, 92vw" width="1280" height="800" alt="architecture-scan dashboard: a band with open, closed and excluded counts, severity tiles with one cell per finding, and the verdict and perspective panels"></picture></div><figcaption>The open High / Medium count and the finding IDs for each severity, on the first screen. A fictional shop.</figcaption></figure>
       </div>
       <div class="panel" role="tabpanel" id="panel-prompt" aria-labelledby="tab-prompt">
-        <figure><div class="shot"><picture><source media="(max-width: 700px)" srcset="assets/prompt-scan-m.webp" width="780" height="1280"><img loading="lazy" src="assets/prompt-scan.webp" srcset="assets/prompt-scan.webp 1280w, assets/prompt-scan@2x.webp 2560w" sizes="(min-width: 1200px) 1120px, 92vw" width="1280" height="800" alt="prompt-scan のダッシュボード。未解決・対応済み・除外の件数を出す帯、1 件 1 マスの重大度タイル、判定と観点のパネル"></picture></div><figcaption>指摘を不具合と改善提案に分けて数え、帯の一行目で示す。合成サンプルの例。</figcaption></figure>
+        <figure><div class="shot"><picture><source media="(max-width: 700px)" srcset="assets/en/prompt-scan-m.webp" width="780" height="1280"><img loading="lazy" src="assets/en/prompt-scan.webp" srcset="assets/en/prompt-scan.webp 1280w, assets/en/prompt-scan@2x.webp 2560w" sizes="(min-width: 1200px) 1120px, 92vw" width="1280" height="800" alt="prompt-scan dashboard: a band with open, closed and excluded counts, severity tiles with one cell per finding, and the verdict and perspective panels"></picture></div><figcaption>The band's first line counts findings as defects and improvements. A synthetic sample.</figcaption></figure>
       </div>
     </div>
 
     <div class="output-foot">
       <figure class="term term-demo" aria-labelledby="demo-cap">
-        <figcaption class="term-head" id="demo-cap"><span>手元で同じ画面をつくる</span></figcaption>
-        <div class="term-body" tabindex="0" role="region" aria-label="コマンドと出力。横にスクロールできます">
+        <figcaption class="term-head" id="demo-cap"><span>Build the same screen locally</span></figcaption>
+        <div class="term-body" tabindex="0" role="region" aria-label="Command and output. Scrolls horizontally">
 <pre class="cmd"><span class="ps" aria-hidden="true">$ </span>cd security-scan
 <span class="ps" aria-hidden="true">$ </span>make demo NO_PDF=1 DEMO_OUT=../out/security-scan</pre>
 <pre class="out">wrote ../out/security-scan/dashboard.html
@@ -164,10 +165,10 @@ wrote ../out/security-scan/assessment.html</pre>
         </div>
       </figure>
       <dl class="formats">
-        <div><dt>chat</dt><dd>会話の中で、まず読むべきことだけを要約。</dd></div>
-        <div><dt>dashboard</dt><dd>単体で開ける HTML。検索とキーボード操作に対応。</dd></div>
-        <div><dt>report</dt><dd>Markdown、または印刷用の HTML / PDF。形式はスキルにより異なります。</dd></div>
-        <div><dt>findings.json</dt><dd>すべての記録。再スキャンとの比較、SARIF への書き出し。</dd></div>
+        <div><dt>chat</dt><dd>A summary in the conversation of only what to read first.</dd></div>
+        <div><dt>dashboard</dt><dd>A standalone HTML file, with search and keyboard navigation.</dd></div>
+        <div><dt>report</dt><dd>Markdown, or printable HTML / PDF. The format depends on the skill.</dd></div>
+        <div><dt>findings.json</dt><dd>Every record. Compare with a re-scan, export to SARIF.</dd></div>
       </dl>
     </div>
   </div>
@@ -176,35 +177,35 @@ wrote ../out/security-scan/assessment.html</pre>
 <section class="sect sect-install" id="install" aria-labelledby="install-title">
   <div class="wrap install-grid">
     <header class="sect-head">
-      <h2 id="install-title">導入は 3 ステップ。</h2>
-      <p>必要なのは Python 3.9 以上(一部のスキルは 3.10 以上)と make です。追加のパッケージは入りません。PDF の出力には Chrome / Chromium を使います。</p>
-      <p class="caveat"><strong>リポジトリは現在非公開です。</strong>clone にはリポジトリへのアクセス権が必要です。<a href="https://github.com/simota/agentic-scan">GitHub でリポジトリを見る</a></p>
+      <h2 id="install-title">Three steps to install.</h2>
+      <p>You need Python 3.9 or later (3.10 or later for some skills) and make. No extra packages are installed. PDF output uses Chrome / Chromium.</p>
+      <p class="caveat"><strong>The repository is private for now.</strong> Cloning it requires access to the repository. <a href="https://github.com/simota/agentic-scan">View the repository on GitHub</a></p>
     </header>
     <ol class="steps">
       <li>
-        <h3>取得する</h3>
+        <h3>Get it</h3>
         <div class="term term-step">
-          <div class="term-head"><span>shell</span><button class="copy" type="button" data-copy="git clone https://github.com/simota/agentic-scan.git&#10;cd agentic-scan">コピー</button></div>
-          <div class="term-body" tabindex="0" role="region" aria-label="取得するコマンド">
+          <div class="term-head"><span>shell</span><button class="copy" type="button" data-copy="git clone https://github.com/simota/agentic-scan.git&#10;cd agentic-scan">Copy</button></div>
+          <div class="term-body" tabindex="0" role="region" aria-label="Commands to get it">
 <pre class="cmd"><span class="ps" aria-hidden="true">$ </span>git clone https://github.com/simota/agentic-scan.git
 <span class="ps" aria-hidden="true">$ </span>cd agentic-scan</pre>
           </div>
         </div>
       </li>
       <li>
-        <h3>エージェントにつなぐ</h3>
+        <h3>Connect your agents</h3>
         <div class="term term-step">
-          <div class="term-head"><span>shell</span><button class="copy" type="button" data-copy="make link">コピー</button></div>
-          <div class="term-body" tabindex="0" role="region" aria-label="つなぐコマンド">
-<pre class="cmd"><span class="ps" aria-hidden="true">$ </span>make link     <span class="cm"># 入っているエージェントすべてにリンク</span>
-<span class="ps" aria-hidden="true">$ </span>make status   <span class="cm"># つながったスキルを確認</span></pre>
+          <div class="term-head"><span>shell</span><button class="copy" type="button" data-copy="make link">Copy</button></div>
+          <div class="term-body" tabindex="0" role="region" aria-label="Commands to connect">
+<pre class="cmd"><span class="ps" aria-hidden="true">$ </span>make link     <span class="cm"># link into every installed agent</span>
+<span class="ps" aria-hidden="true">$ </span>make status   <span class="cm"># check which skills are connected</span></pre>
           </div>
         </div>
       </li>
       <li>
-        <h3>頼む</h3>
-        <p class="ask">診断したいリポジトリで、エージェントにそのまま頼みます。</p>
-        <p class="say">このリポジトリを security-scan で診断して</p>
+        <h3>Ask</h3>
+        <p class="ask">In the repository you want reviewed, just ask your agent.</p>
+        <p class="say">Review this repository with security-scan</p>
       </li>
     </ol>
   </div>
@@ -212,31 +213,31 @@ wrote ../out/security-scan/assessment.html</pre>
 
 <section class="sect" id="faq" aria-labelledby="faq-title">
   <div class="wrap faq-grid">
-    <h2 id="faq-title">よくある質問</h2>
+    <h2 id="faq-title">FAQ</h2>
     <div class="faq-list">
       <details>
-        <summary>コードを書き換えられることはありますか。</summary>
-        <p>ありません。各スキルは既定で読み取り専用です。例外は依頼と許可があった場合だけで、logic-scan と test-gap-scan は指摘を確かめるテストを追加して実行し、data-integrity-scan は使い捨てのローカル DB でマイグレーションを試します。performance-scan のベンチマークも、依頼があったときに手元の環境でだけ動かします。修正そのものは別の依頼として扱います。</p>
+        <summary>Can it rewrite my code?</summary>
+        <p>No. Every skill is read-only by default. The only exceptions are when you ask and allow it: logic-scan and test-gap-scan add and run tests that check a finding, and data-integrity-scan tries migrations on a throwaway local database. performance-scan also runs benchmarks only when asked, and only in your local environment. Fixes themselves are a separate request.</p>
       </details>
       <details>
-        <summary>本番環境やクラウドに接続しますか。</summary>
-        <p>しません。デプロイ済みのシステムへ通信を送らず、infra-security-scan もクラウドの API を呼ばずに設定ファイルだけを読みます。data-integrity-scan も本番のデータベースには接続しません。</p>
+        <summary>Does it connect to production or the cloud?</summary>
+        <p>No. It sends no traffic to deployed systems, and infra-security-scan reads only configuration files without calling cloud APIs. data-integrity-scan never connects to a production database either.</p>
       </details>
       <details>
-        <summary>どのエージェントで使えますか。</summary>
-        <p>Claude Code、Codex、Antigravity です。<code>make link</code> が、インストールされているものすべてのスキル置き場にリンクを作ります。<code>make link AGENT=claude</code> のように一つだけ選ぶこともできます。</p>
+        <summary>Which agents does it work with?</summary>
+        <p>Claude Code, Codex and Antigravity. <code>make link</code> creates links in the skills folder of every one that is installed. You can also pick just one, as in <code>make link AGENT=claude</code>.</p>
       </details>
       <details>
-        <summary>privacy-scan の結果は法的な判断になりますか。</summary>
-        <p>なりません。ソースコードの技術的なレビューであり、法的な見解ではありません。アプリ自身の約束や、指定した要件とコードを照らし合わせます。</p>
+        <summary>Is privacy-scan's output a legal opinion?</summary>
+        <p>No. It is a technical review of the source code, not a legal opinion. It checks the code against the app's own promises and the requirements you specify.</p>
       </details>
       <details>
-        <summary>日本語でレポートを受け取れますか。</summary>
-        <p>受け取れます。各スキルのダッシュボードとレポートは日本語と英語に対応しています。</p>
+        <summary>Can I get reports in Japanese?</summary>
+        <p>Yes. Every skill's dashboard and report are available in English and Japanese.</p>
       </details>
       <details>
-        <summary>自分の手元でサンプルを見られますか。</summary>
-        <p>各スキルのディレクトリで <code>make demo</code> を実行すると、同梱のサンプルデータからダッシュボードを生成します。このページの画面もそうして作ったものです。</p>
+        <summary>Can I see the samples on my own machine?</summary>
+        <p>Run <code>make demo</code> in a skill's directory to generate a dashboard from its bundled sample data. The screens on this page were made that way.</p>
       </details>
     </div>
   </div>
@@ -248,7 +249,7 @@ wrote ../out/security-scan/assessment.html</pre>
   <div class="wrap foot-inner">
     <p class="wordmark"><span class="perm" aria-hidden="true">r--</span>agentic-scan</p>
     <p class="spec"><span>12 skills</span><span>read-only</span><span>dashboard + report</span></p>
-    <p class="fine">このページの指摘と画面は、各スキルに同梱された架空のアプリのサンプルデータから生成したものです。実在のシステムの診断結果ではありません。</p>
+    <p class="fine">The findings and screens on this page were generated from the fictional sample data bundled with each skill. They are not results from reviewing any real system.</p>
   </div>
 </footer>
 <div class="toast" role="status" aria-live="polite"></div>

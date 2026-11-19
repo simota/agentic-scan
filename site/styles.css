@@ -177,6 +177,18 @@ a:hover { text-decoration-thickness: var(--bw-strong); }
   transition: color var(--t-fast) var(--ease);
 }
 .nav a:hover { color: var(--ink); }
+/* language switch: the other language's page */
+.lang {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  color: var(--muted);
+  font-size: var(--fs-s);
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+  transition: color var(--t-fast) var(--ease);
+}
+.lang:hover { color: var(--ink); }
 
 /* buttons */
 .btn {
@@ -417,6 +429,7 @@ a:hover { text-decoration-thickness: var(--bw-strong); }
 @media (max-width: 44.99rem) {
   .bar nav { display: none; }
   .bar-inner { justify-content: space-between; }
+  .bar .lang { margin-left: auto; }
   .hero { padding-block: var(--s6) var(--s8); }
   .lead { font-size: var(--fs-m); }
   .cta-row .btn { flex: 1 1 100%; }

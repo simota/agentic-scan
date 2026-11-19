@@ -53,5 +53,5 @@ On 2026-11-19 the brand was rebuilt in the "terminal / agent" direction.
 
 ## Known constraints
 
-- The GitHub repository is private. Visitors without access cannot clone it or use the GitHub link (stated in the install section).
+- Published with GitHub Pages at https://simota.github.io/agentic-scan/ from `site/` (`.github/workflows/pages.yml`).
 - There is no OGP image. With no public URL, an absolute URL cannot be set.

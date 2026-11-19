@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>security-scan — 注文管理アプリ（架空のサンプル） | agentic-scan</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --term: #eceef2;
+  --ink: #12161c;
+  --muted: #545d68;
+  --line: #d3d8df;
+  --accent: #1f3f66;
+  --mark: #dfe7f2;
+  --band: #12161c;
+  --band-ink: #e9ecf0;
+  --band-muted: #a7b0bb;
+  --band-accent: #a9c3e6;
+  --high: #8a1c1c;
+  --medium: #7a4800;
+  --low: #24476e;
+  --info: #5a5a5a;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Hiragino Sans", "Noto Sans JP", monospace;
+  --sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+
+  --s1: 0.25rem;
+  --s2: 0.5rem;
+  --s3: 0.75rem;
+  --s4: 1rem;
+  --s5: 1.5rem;
+  --s6: 2rem;
+  --radius: 4px;
+  --radius-s: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f1217;
+    --surface: #151a21;
+    --term: #0a0d11;
+    --ink: #e3e7ec;
+    --muted: #9ba4ae;
+    --line: #29313b;
+    --accent: #a9c3e6;
+    --mark: #1a2638;
+    --band: #151a21;
+    --band-ink: #e3e7ec;
+    --band-muted: #9ba4ae;
+    --band-accent: #a9c3e6;
+    --high: #f2a19a;
+    --medium: #e8bf7a;
+    --low: #a9c3e6;
+    --info: #b3aea4;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1217;
+  --surface: #151a21;
+  --term: #0a0d11;
+  --ink: #e3e7ec;
+  --muted: #9ba4ae;
+  --line: #29313b;
+  --accent: #a9c3e6;
+  --mark: #1a2638;
+  --band: #151a21;
+  --band-ink: #e3e7ec;
+  --band-muted: #9ba4ae;
+  --band-accent: #a9c3e6;
+  --high: #f2a19a;
+  --medium: #e8bf7a;
+  --low: #a9c3e6;
+  --info: #b3aea4;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+h1, h2, h3, h4, p, dl, dd, ul, ol { margin: 0; }
+code, pre, kbd { font-family: var(--mono); }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-s); }
+
+/* Instrument Bezel Header */
+.bezel {
+  background: var(--band);
+  color: var(--band-ink);
+  border-bottom: 1px solid var(--line);
+}
+.bezel-in {
+  max-width: 78rem;
+  margin-inline: auto;
+  padding: var(--s3) var(--s4);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+}
+.brand-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  font-family: var(--mono);
+  min-width: 0;
+}
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--band-ink);
+}
+.perm {
+  padding: 0 0.35rem;
+  border-radius: var(--radius-s);
+  background: var(--band-ink);
+  color: var(--band);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+}
+.skill-tag {
+  font-size: 0.8125rem;
+  color: var(--band-accent);
+  border-left: 1px solid var(--line);
+  padding-left: var(--s3);
+}
+.bezel-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s4);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--band-muted);
+}
+.mode-pill {
+  border: 1px solid var(--band-muted);
+  border-radius: var(--radius-s);
+  padding: 0.1rem 0.45rem;
+  color: var(--band-ink);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+}
+.theme-btn {
+  background: transparent;
+  border: 1px solid var(--band-muted);
+  border-radius: var(--radius);
+  padding: 0.25rem 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--band-ink);
+}
+.theme-btn:hover { border-color: var(--band-accent); color: var(--band-accent); }
+
+/* Main Frame */
+.wrap {
+  max-width: 78rem;
+  margin-inline: auto;
+  padding: var(--s5) var(--s4) var(--s6);
+  display: grid;
+  gap: var(--s5);
+}
+
+/* Target Strip */
+.target-bar {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--s4);
+  display: grid;
+  gap: var(--s3);
+}
+.target-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s2) var(--s4);
+}
+.target-top h1 {
+  font-size: clamp(1.25rem, 1rem + 1vw, 1.625rem);
+  font-weight: 800;
+  line-height: 1.3;
+}
+.target-sub {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.telemetry-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: var(--s2) var(--s4);
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+  font-size: 0.8125rem;
+}
+.telemetry-item dt {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.telemetry-item dd {
+  margin-top: 0.15rem;
+  color: var(--ink);
+}
+
+/* Instrument Cluster */
+.cluster {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s4);
+}
+.inst {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.inst-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s4);
+  background: var(--term);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.inst-head .unit {
+  color: var(--muted);
+  font-weight: 400;
+}
+.inst-body {
+  padding: var(--s4);
+  display: grid;
+  gap: var(--s3);
+}
+
+/* Severity Readout Grid */
+.sev-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s3);
+}
+.dial {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: var(--s3);
+  background: var(--bg);
+  border-top-width: 3px;
+}
+.dial.high { border-top-color: var(--high); }
+.dial.medium { border-top-color: var(--medium); }
+.dial.low { border-top-color: var(--low); }
+.dial.info { border-top-color: var(--info); }
+.dial-k {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.dial.high .dial-k { color: var(--high); }
+.dial.medium .dial-k { color: var(--medium); }
+.dial.low .dial-k { color: var(--low); }
+.dial.info .dial-k { color: var(--info); }
+.dial-v {
+  margin-top: var(--s1);
+  font-family: var(--mono);
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.dial-sub {
+  margin-top: var(--s1);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* Segmented Bar SVG & Legend */
+.meter-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.meter-note {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+/* Channel Sweep (Perspectives) */
+.channels {
+  display: grid;
+  gap: var(--s2);
+}
+.ch {
+  display: grid;
+  grid-template-columns: 3.2rem minmax(0, 1fr);
+  gap: var(--s2);
+  align-items: baseline;
+  padding: var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg);
+  font-size: 0.8125rem;
+}
+.ch-id {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+.ch-main { min-width: 0; }
+.ch-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s1) var(--s2);
+}
+.ch-name { font-weight: 700; }
+.ch-res {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+}
+.ch-res.alert { color: var(--high); font-weight: 700; }
+.ch-res.warn { color: var(--medium); font-weight: 700; }
+.ch-res.muted { color: var(--muted); }
+.ch-note {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+/* Verification Scale */
+.v-scale {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s2);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+.v-cell {
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--bg);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s2);
+}
+.v-cell.fp { background: var(--mark); border-color: var(--accent); }
+.v-cell strong { font-size: 1rem; font-variant-numeric: tabular-nums; }
+
+/* Workspace: Register + Probe */
+.workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s4);
+  align-items: start;
+}
+
+/* Signal Register */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+.pill {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: 0.2rem 0.55rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.pill[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+  font-weight: 700;
+}
+.signal-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.signal-item {
+  border-bottom: 1px solid var(--line);
+}
+.signal-item:last-child { border-bottom: 0; }
+.signal-btn {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: var(--s3) var(--s4);
+  display: grid;
+  gap: var(--s1);
+  border-left: 3px solid transparent;
+}
+.signal-btn:hover { background: var(--term); }
+.signal-btn[aria-selected="true"] {
+  background: var(--mark);
+  border-left-color: var(--accent);
+}
+.signal-item.is-fp .signal-btn {
+  background: var(--mark);
+}
+.signal-item.is-fp .signal-btn[aria-selected="true"] {
+  border-left-color: var(--ink);
+}
+.sig-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+.sig-id { font-weight: 700; }
+.sev-badge {
+  font-weight: 700;
+  padding: 0 0.35rem;
+  border-radius: var(--radius-s);
+  border: 1px solid currentColor;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+.sev-High { color: var(--high); }
+.sev-Medium { color: var(--medium); }
+.sev-Low { color: var(--low); }
+.sev-Info { color: var(--info); }
+.sig-verdict { color: var(--muted); }
+.sig-verdict.fp { color: var(--accent); font-weight: 700; }
+.sig-status {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.sig-title {
+  font-weight: 700;
+  font-size: 0.9375rem;
+  color: var(--ink);
+}
+.sig-loc {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* Probe Detail Panel */
+.probe-head {
+  padding: var(--s4);
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: var(--s2);
+}
+.probe-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+.probe-title {
+  font-size: 1.125rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+.probe-loc {
+  display: inline-block;
+  padding: var(--s1) var(--s2);
+  background: var(--term);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+}
+.probe-body {
+  padding: var(--s4);
+  display: grid;
+  gap: var(--s4);
+}
+.probe-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  gap: var(--s2) var(--s4);
+  padding: var(--s3);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  font-size: 0.8125rem;
+}
+.probe-grid dt {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.probe-grid dd {
+  margin-top: 0.15rem;
+  font-family: var(--mono);
+  font-weight: 700;
+}
+.probe-sec h3 {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--s1);
+}
+.probe-sec p { font-size: 0.9375rem; }
+.probe-fix {
+  padding: var(--s3);
+  background: var(--bg);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-s) var(--radius-s) 0;
+}
+.probe-hist {
+  padding: var(--s3);
+  background: var(--term);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  font-size: 0.8125rem;
+}
+
+/* Footer Notes */
+.notes-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s4);
+}
+.note-list {
+  padding-left: 1.25rem;
+  display: grid;
+  gap: var(--s2);
+  font-size: 0.875rem;
+}
+.foot {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s3);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+@media (min-width: 48rem) {
+  .sev-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .v-scale { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .notes-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 64rem) {
+  .cluster { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
+  .workbench { grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); }
+  .probe-sticky { position: sticky; top: var(--s4); }
+}
+
+@media print {
+  :root, :root[data-theme="dark"] {
+    color-scheme: light;
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --term: #f4f5f7;
+    --ink: #12161c;
+    --muted: #545d68;
+    --line: #d3d8df;
+    --accent: #1f3f66;
+    --mark: #dfe7f2;
+    --band: #ffffff;
+    --band-ink: #12161c;
+    --band-muted: #545d68;
+    --band-accent: #1f3f66;
+    --high: #8a1c1c;
+    --medium: #7a4800;
+    --low: #24476e;
+    --info: #5a5a5a;
+  }
+  body { background: #ffffff; font-size: 10pt; }
+  .theme-btn, .filter-bar { display: none !important; }
+  .bezel { border-bottom: 2px solid var(--ink); }
+  .perm { border: 1px solid var(--ink); background: transparent; color: var(--ink); }
+  .cluster, .workbench, .notes-grid { grid-template-columns: 1fr; }
+  .probe-sticky { position: static; }
+  .inst, .target-bar { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+
+<header class="bezel">
+  <div class="bezel-in">
+    <div class="brand-group">
+      <span class="wordmark"><span class="perm" aria-hidden="true">r--</span>agentic-scan</span>
+      <span class="skill-tag">security-scan</span>
+    </div>
+    <div class="bezel-meta">
+      <span>2026-10-06</span>
+      <span>rev: demo-revision (架空)</span>
+      <span class="mode-pill">READ-ONLY</span>
+      <button type="button" class="theme-btn" id="theme-toggle">theme</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="target-bar" aria-labelledby="report-title">
+    <div class="target-top">
+      <h1 id="report-title">注文管理アプリ（架空のサンプル）</h1>
+      <span class="target-sub">assessor: security-scan / デモ用データ</span>
+    </div>
+    <dl class="telemetry-row">
+      <div class="telemetry-item">
+        <dt>Scope</dt>
+        <dd>src/api/ の注文・レポート API と依存関係の記録</dd>
+      </div>
+      <div class="telemetry-item">
+        <dt>Method</dt>
+        <dd>静的なソースレビュー。実環境への通信・攻撃は実施していません。</dd>
+      </div>
+      <div class="telemetry-item">
+        <dt>Severity Axis</dt>
+        <dd>confirmed（依頼者が確認済み）</dd>
+      </div>
+    </dl>
+  </section>
+
+  <!-- Instrument Cluster -->
+  <section class="cluster" aria-label="計測サマリ">
+    <div class="inst">
+      <div class="inst-head">
+        <span>SEVERITY METER</span>
+        <span class="unit">INCLUDED: 6 / EXCLUDED: 1 / TOTAL: 7</span>
+      </div>
+      <div class="inst-body">
+        <div class="sev-grid">
+          <div class="dial high">
+            <div class="dial-k"><span>HIGH</span><span>2/6</span></div>
+            <div class="dial-v">2</div>
+            <div class="dial-sub">Open 2 · 別途除外 1</div>
+          </div>
+          <div class="dial medium">
+            <div class="dial-k"><span>MEDIUM</span><span>1/6</span></div>
+            <div class="dial-v">1</div>
+            <div class="dial-sub">Open 1</div>
+          </div>
+          <div class="dial low">
+            <div class="dial-k"><span>LOW</span><span>2/6</span></div>
+            <div class="dial-v">2</div>
+            <div class="dial-sub">Fixed 1 · Accepted 1</div>
+          </div>
+          <div class="dial info">
+            <div class="dial-k"><span>INFO</span><span>1/6</span></div>
+            <div class="dial-v">1</div>
+            <div class="dial-sub">Open 1</div>
+          </div>
+        </div>
+
+        <svg class="meter-svg" viewBox="0 0 600 44" role="img" aria-label="集計対象6件の重大度内訳: High 2, Medium 1, Low 2, Info 1">
+          <rect x="0" y="6" width="196" height="16" rx="2" fill="var(--high)"></rect>
+          <rect x="200" y="6" width="98" height="16" rx="2" fill="var(--medium)"></rect>
+          <rect x="302" y="6" width="196" height="16" rx="2" fill="var(--low)"></rect>
+          <rect x="502" y="6" width="98" height="16" rx="2" fill="var(--info)"></rect>
+          <line x1="0" y1="28" x2="600" y2="28" stroke="var(--line)" stroke-width="1"></line>
+          <text x="0" y="40" fill="var(--muted)" font-family="ui-monospace, monospace" font-size="10">0</text>
+          <text x="196" y="40" fill="var(--muted)" font-family="ui-monospace, monospace" font-size="10" text-anchor="middle">2</text>
+          <text x="300" y="40" fill="var(--muted)" font-family="ui-monospace, monospace" font-size="10" text-anchor="middle">3</text>
+          <text x="500" y="40" fill="var(--muted)" font-family="ui-monospace, monospace" font-size="10" text-anchor="middle">5</text>
+          <text x="600" y="40" fill="var(--muted)" font-family="ui-monospace, monospace" font-size="10" text-anchor="end">6 included</text>
+        </svg>
+
+        <div class="v-scale" aria-label="妥当性判定の内訳">
+          <div class="v-cell"><span>Valid</span><strong>2</strong></div>
+          <div class="v-cell"><span>Likely</span><strong>1</strong></div>
+          <div class="v-cell"><span>Unverified</span><strong>3</strong></div>
+          <div class="v-cell fp"><span>FalsePositive</span><strong>1</strong></div>
+        </div>
+
+        <div class="meter-note">
+          <span>未対応の高・中リスク: 3 件（F-001, D-001, F-002）</span>
+          <span>区分: code 5 件(+除外1) / deps 1 件</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="inst">
+      <div class="inst-head">
+        <span>PERSPECTIVE SWEEP</span>
+        <span class="unit">6 CHANNELS</span>
+      </div>
+      <div class="inst-body">
+        <div class="channels">
+          <div class="ch">
+            <span class="ch-id">CH-01</span>
+            <div class="ch-main">
+              <div class="ch-top"><span class="ch-name">利用者・テナント境界</span><span class="ch-res alert">High 1 件</span></div>
+              <p class="ch-note">注文詳細の所有者確認をレビュー</p>
+            </div>
+          </div>
+          <div class="ch">
+            <span class="ch-id">CH-02</span>
+            <div class="ch-main">
+              <div class="ch-top"><span class="ch-name">入力処理</span><span class="ch-res">疑い 1 件を誤検知として除外</span></div>
+              <p class="ch-note">固定の許可リストと値の流れを確認</p>
+            </div>
+          </div>
+          <div class="ch">
+            <span class="ch-id">CH-03</span>
+            <div class="ch-main">
+              <div class="ch-top"><span class="ch-name">依存関係</span><span class="ch-res alert">適用条件の検証が必要</span></div>
+              <p class="ch-note">ライブラリの実際の呼び出し経路は未確認</p>
+            </div>
+          </div>
+          <div class="ch">
+            <span class="ch-id">CH-04</span>
+            <div class="ch-main">
+              <div class="ch-top"><span class="ch-name">可用性</span><span class="ch-res warn">Medium 1 件</span></div>
+              <p class="ch-note">上流の流量・件数制限は未確認</p>
+            </div>
+          </div>
+          <div class="ch">
+            <span class="ch-id">CH-05</span>
+            <div class="ch-main">
+              <div class="ch-top"><span class="ch-name">ファイル処理</span><span class="ch-res muted">対象外</span></div>
+              <p class="ch-note">レビュー対象にはファイルアップロード機能がありません</p>
+            </div>
+          </div>
+          <div class="ch">
+            <span class="ch-id">CH-06</span>
+            <div class="ch-main">
+              <div class="ch-top"><span class="ch-name">プライバシー</span><span class="ch-res muted">未確認の範囲あり</span></div>
+              <p class="ch-note">ログ基盤の設定は今回の診断対象外</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Signal Register & Probe -->
+  <section class="workbench" aria-label="指摘一覧と詳細プローブ">
+    <div class="inst">
+      <div class="inst-head">
+        <span>SIGNAL REGISTER</span>
+        <span class="unit" id="reg-count">7 RECORDS</span>
+      </div>
+      <div class="filter-bar" role="group" aria-label="絞り込み">
+        <button type="button" class="pill" data-filter="all" aria-pressed="true">ALL (7)</button>
+        <button type="button" class="pill" data-filter="open" aria-pressed="false">OPEN (4)</button>
+        <button type="button" class="pill" data-filter="High" aria-pressed="false">HIGH (2+1)</button>
+        <button type="button" class="pill" data-filter="excluded" aria-pressed="false">EXCLUDED (1)</button>
+      </div>
+      <ul class="signal-list" id="signal-list"></ul>
+    </div>
+
+    <article class="inst probe-sticky" aria-live="polite" aria-labelledby="probe-title">
+      <div class="inst-head">
+        <span>INSPECTION PROBE</span>
+        <span class="unit" id="probe-id">F-001</span>
+      </div>
+      <div id="probe-content"></div>
+    </article>
+  </section>
+
+  <!-- Decisions, Next Steps & Limitations -->
+  <section class="notes-grid" aria-label="判断事項と制約">
+    <div class="inst">
+      <div class="inst-head">
+        <span>DECISIONS &amp; NEXT STEPS</span>
+        <span class="unit">ACTION</span>
+      </div>
+      <div class="inst-body">
+        <div class="probe-sec">
+          <h3>判断が必要な事項</h3>
+          <ul class="note-list">
+            <li>スタッフが他の担当者のアーカイブ済み注文を閲覧できるべきか、仕様を確定してください。</li>
+          </ul>
+        </div>
+        <div class="probe-sec">
+          <h3>推奨する対応順</h3>
+          <ul class="note-list">
+            <li>F-001 の所有者確認を修正し、アクセス境界の回帰テストを追加します。</li>
+            <li>D-001 と F-002 の適用条件を確認し、現在の判定と根拠を更新します。</li>
+            <li>F-003 の修正が対象環境に反映されたかを確認します。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="inst">
+      <div class="inst-head">
+        <span>CHECKED OK &amp; LIMITATIONS</span>
+        <span class="unit">BOUNDARY</span>
+      </div>
+      <div class="inst-body">
+        <div class="probe-sec">
+          <h3>問題がなかった確認項目</h3>
+          <ul class="note-list">
+            <li>レビューした検索クエリはパラメーターをバインドしています。</li>
+          </ul>
+        </div>
+        <div class="probe-sec">
+          <h3>制約事項</h3>
+          <ul class="note-list">
+            <li>このファイルのアプリ・指摘・根拠はすべて架空です。実際のリポジトリを診断した結果ではありません。</li>
+            <li>デプロイ済みの設定、実行環境、ゲートウェイ、監査ログ基盤は確認していません。</li>
+            <li>外部の脆弱性データベースへの問い合わせは実施していません。依存関係の網羅性は保証しません。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>r-- agentic-scan · security-scan · static read-only report</span>
+    <span>Pattern 08: Scan Sweep Instrument Panel</span>
+  </footer>
+</main>
+
+<script>
+(function () {
+  var FINDINGS = [
+    {
+      id: "F-001",
+      title: "注文詳細 API に所有者の確認がない",
+      severity: "High",
+      confidence: "Confirmed",
+      status: "Open",
+      category: "利用者・テナント境界",
+      location: "src/api/orders.py:42",
+      actor: "ログイン済みの顧客",
+      request: "GET /orders/{id}",
+      impact: "別の顧客の注文内容を閲覧できる可能性があります。",
+      fix: "注文の取得条件にログイン中のアカウント ID を含めます。自分の注文は取得でき、他人の注文は取得できないことを回帰テストで確認します。",
+      validation: {
+        verdict: "Valid",
+        evidence: "この架空例では、ルートは顧客ロールに公開されています。ハンドラーは主キーだけで注文を取得し、所有者による絞り込みがありません。応答には注文詳細が含まれます。",
+        method: "review"
+      }
+    },
+    {
+      id: "D-001",
+      title: "HTTP クライアントの報告された脆弱性が適用されるか未確認",
+      severity: "High",
+      confidence: "Environment-dependent",
+      status: "Open",
+      category: "依存関係",
+      location: "package-lock.json:18",
+      actor: "適用条件の確認が必要",
+      request: "",
+      impact: "影響を受ける機能が外部入力で呼び出される場合にリスクが生じます。実際の利用経路は未確認です。",
+      fix: "まず対象機能の呼び出し経路とデプロイ済みバージョンを確認します。該当する場合は修正版への更新と互換性テストを計画します。",
+      validation: {
+        verdict: "Unverified",
+        evidence: "デモ用の架空アドバイザリです。依存一覧の記載だけでは適用の有無を判断できません。",
+        method: "auto"
+      },
+      previous_validation: {
+        verdict: "NotApplicable",
+        evidence: "過去の構成では対象機能を使用していませんでした。今回のコードでは再確認が必要です。",
+        method: "review"
+      }
+    },
+    {
+      id: "F-002",
+      title: "一覧 API の取得件数に上限がない",
+      severity: "Medium",
+      confidence: "Confirmed",
+      status: "Open",
+      category: "可用性",
+      location: "src/api/pagination.py:7",
+      actor: "ログイン済みの利用者",
+      request: "GET /orders の per_page パラメーター",
+      impact: "大きな取得件数によって応答サイズやデータベース負荷が増えるおそれがあります。上流の制限は未確認です。",
+      fix: "上流の制限を確認し、API 層でも取得件数の上限と既定値を設定します。上限を超える入力と不正な値のテストを追加します。",
+      validation: {
+        verdict: "Likely",
+        evidence: "アプリ内では上限が見当たりません。ゲートウェイによる制限の有無を確認してください。",
+        method: "review"
+      }
+    },
+    {
+      id: "F-003",
+      title: "デプロイ設定のデバッグ出力",
+      severity: "Low",
+      confidence: "Environment-dependent",
+      status: "Fixed",
+      category: "設定・デプロイ",
+      location: "deploy/php.ini:9",
+      actor: "",
+      request: "",
+      impact: "",
+      fix: "設定上のデバッグ出力は無効化済みです。デプロイ先で有効になったことは別途確認してください。",
+      validation: {
+        verdict: "Unverified",
+        evidence: "修正済みという対応状況のみ記録されています。実環境への反映は未検証です。",
+        method: "review"
+      }
+    },
+    {
+      id: "F-004",
+      title: "レポート検索の SQL 断片（誤検知）",
+      severity: "High",
+      confidence: "Suspected",
+      status: "Excluded",
+      category: "入力処理",
+      location: "src/api/reports.py:88",
+      actor: "",
+      request: "",
+      impact: "",
+      fix: "",
+      validation: {
+        verdict: "FalsePositive",
+        evidence: "SQL 断片は固定の列名リストだけから構築されます。リクエスト値が断片に入る経路はありません。",
+        method: "review"
+      }
+    },
+    {
+      id: "F-005",
+      title: "内部用の診断ヘッダーが応答に含まれる",
+      severity: "Low",
+      confidence: "Confirmed",
+      status: "Accepted",
+      category: "情報公開",
+      location: "src/api/middleware.py:23",
+      actor: "",
+      request: "",
+      impact: "内部のビルド識別子が表示されます。",
+      fix: "",
+      validation: {
+        verdict: "Valid",
+        evidence: "架空の開発環境内に限定して残す判断が記録されています。本番利用時は再判断が必要です。",
+        method: "review"
+      }
+    },
+    {
+      id: "F-006",
+      title: "監査ログの保存期間が記録されていない",
+      severity: "Info",
+      confidence: "Suspected",
+      status: "Open",
+      category: "プライバシー",
+      location: "docs/logging.md:12",
+      actor: "",
+      request: "",
+      impact: "",
+      fix: "保存先・保存期間・削除手順の担当者を確認し、運用文書に記録してください。",
+      validation: {
+        verdict: "Unverified",
+        evidence: "対象文書には保存期間がありません。実際のログ基盤の設定は未確認です。",
+        method: "review"
+      }
+    }
+  ];
+
+  var currentId = "F-001";
+  var currentFilter = "all";
+  var listEl = document.getElementById("signal-list");
+  var probeEl = document.getElementById("probe-content");
+  var probeIdEl = document.getElementById("probe-id");
+  var regCountEl = document.getElementById("reg-count");
+
+  function esc(s) {
+    return String(s || "").replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function matches(f) {
+    if (currentFilter === "all") return true;
+    if (currentFilter === "open") return f.status === "Open";
+    if (currentFilter === "excluded") return f.validation.verdict === "FalsePositive";
+    return f.severity === currentFilter;
+  }
+
+  function renderProbe(f) {
+    probeIdEl.textContent = f.id + " · " + f.category;
+    var isFp = f.validation.verdict === "FalsePositive";
+    var html = '' +
+      '<div class="probe-head">' +
+        '<div class="probe-meta">' +
+          '<span class="sev-badge sev-' + esc(f.severity) + '">' + esc(f.severity) + '</span>' +
+          '<span>' + esc(f.confidence) + '</span>' +
+          '<span>/</span>' +
+          '<span class="' + (isFp ? 'sig-verdict fp' : 'sig-verdict') + '">' + esc(f.validation.verdict) + '</span>' +
+          '<span>/</span>' +
+          '<span>' + esc(f.status) + '</span>' +
+        '</div>' +
+        '<h2 class="probe-title" id="probe-title">' + esc(f.id) + ' ' + esc(f.title) + '</h2>' +
+        '<div><code class="probe-loc">' + esc(f.location) + '</code></div>' +
+      '</div>' +
+      '<div class="probe-body">' +
+        '<dl class="probe-grid">' +
+          '<div><dt>Category</dt><dd>' + esc(f.category) + '</dd></div>' +
+          '<div><dt>Method</dt><dd>' + esc(f.validation.method) + '</dd></div>' +
+          (f.actor ? '<div><dt>Actor</dt><dd>' + esc(f.actor) + '</dd></div>' : '') +
+          (f.request ? '<div><dt>Request</dt><dd>' + esc(f.request) + '</dd></div>' : '') +
+        '</dl>' +
+        '<div class="probe-sec"><h3>Validation Evidence（根拠）</h3><p>' + esc(f.validation.evidence) + '</p></div>' +
+        (f.impact ? '<div class="probe-sec"><h3>Impact（影響）</h3><p>' + esc(f.impact) + '</p></div>' : '') +
+        (f.fix ? '<div class="probe-sec"><h3>Fix Direction（修正方針）</h3><p class="probe-fix">' + esc(f.fix) + '</p></div>' : '') +
+        (isFp ? '<div class="probe-hist">誤検知（FalsePositive）と判定された指摘です。削除せず、反証の根拠とともに記録に残しています。</div>' : '') +
+        (f.previous_validation ? '<div class="probe-hist"><strong>以前の判定（履歴）:</strong> ' + esc(f.previous_validation.verdict) + ' — ' + esc(f.previous_validation.evidence) + '</div>' : '') +
+      '</div>';
+    probeEl.innerHTML = html;
+  }
+
+  function renderList() {
+    var items = FINDINGS.filter(matches);
+    regCountEl.textContent = items.length + " / " + FINDINGS.length + " RECORDS";
+    listEl.innerHTML = items.map(function (f) {
+      var isFp = f.validation.verdict === "FalsePositive";
+      var sel = f.id === currentId;
+      return '<li class="signal-item' + (isFp ? ' is-fp' : '') + '">' +
+        '<button type="button" class="signal-btn" data-id="' + esc(f.id) + '" aria-selected="' + (sel ? 'true' : 'false') + '">' +
+          '<span class="sig-top">' +
+            '<span class="sig-id">' + esc(f.id) + '</span>' +
+            '<span class="sev-badge sev-' + esc(f.severity) + '">' + esc(f.severity) + '</span>' +
+            '<span class="sig-verdict' + (isFp ? ' fp' : '') + '">' + esc(f.validation.verdict) + '</span>' +
+            '<span class="sig-status">' + esc(f.status) + '</span>' +
+          '</span>' +
+          '<span class="sig-title">' + esc(f.title) + '</span>' +
+          '<span class="sig-loc">' + esc(f.location) + '</span>' +
+        '</button>' +
+      '</li>';
+    }).join("");
+
+    listEl.querySelectorAll(".signal-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        currentId = btn.getAttribute("data-id");
+        var found = FINDINGS.find(function (x) { return x.id === currentId; });
+        if (found) renderProbe(found);
+        renderList();
+      });
+    });
+  }
+
+  document.querySelectorAll(".pill").forEach(function (pill) {
+    pill.addEventListener("click", function () {
+      currentFilter = pill.getAttribute("data-filter");
+      document.querySelectorAll(".pill").forEach(function (p) {
+        p.setAttribute("aria-pressed", p === pill ? "true" : "false");
+      });
+      var items = FINDINGS.filter(matches);
+      if (items.length && !items.some(function (x) { return x.id === currentId; })) {
+        currentId = items[0].id;
+        renderProbe(items[0]);
+      }
+      renderList();
+    });
+  });
+
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var root = document.documentElement;
+    var dark = root.dataset.theme ? root.dataset.theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+  });
+
+  renderProbe(FINDINGS[0]);
+  renderList();
+})();
+</script>
+</body>
+</html>

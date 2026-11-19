@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>security-scan pipeline run</title>
+<style>
+/* 02 CI pipeline run log — tokens copied from site/styles.css */
+:root{color-scheme:light;--bg:#f4f5f7;--surface:#fff;--term:#eceef2;--ink:#12161c;--muted:#545d68;--line:#d3d8df;--accent:#1f3f66;--mark:#dfe7f2;--high:#8a1c1c;--medium:#7a4800;--low:#24476e;--info:#5a5a5a;
+--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono","Hiragino Sans","Noto Sans JP",monospace;
+--sans:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+--gutter:1rem;--radius:4px;--radius-s:2px}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#0f1217;--surface:#151a21;--term:#0a0d11;--ink:#e3e7ec;--muted:#9ba4ae;--line:#29313b;--accent:#a9c3e6;--mark:#1a2638;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#0f1217;--surface:#151a21;--term:#0a0d11;--ink:#e3e7ec;--muted:#9ba4ae;--line:#29313b;--accent:#a9c3e6;--mark:#1a2638;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4}
+@media (min-width:48rem){:root{--gutter:2rem}}
+
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:.9375rem/1.75 var(--sans);-webkit-text-size-adjust:100%}
+h1,h2,h3,p,ol,ul,dl,dd{margin:0}
+ol,ul{padding:0;list-style:none}
+a{color:var(--accent);text-underline-offset:.2em}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:var(--radius-s)}
+.mono,code{font-family:var(--mono)}
+.wrap{max-width:calc(68rem + 2*var(--gutter));margin-inline:auto;padding-inline:var(--gutter)}
+
+/* run header */
+.runbar{border-bottom:1px solid var(--line);background:var(--surface)}
+.runbar .wrap{padding-block:1rem 1.25rem}
+.crumb{display:flex;flex-wrap:wrap;align-items:center;gap:.25rem .5rem;color:var(--muted);font:.8125rem/1.6 var(--mono)}
+.crumb .sep{opacity:.6}
+.perm{padding:0 .25rem;border-radius:var(--radius-s);background:var(--ink);color:var(--bg);font:700 .6875rem/1.6 var(--mono);letter-spacing:.04em}
+.crumb b{color:var(--ink)}
+.title-row{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem 1rem;margin-top:.75rem}
+.title-row h1{font-size:clamp(1.25rem,1rem + 1.2vw,1.625rem);font-weight:800;line-height:1.35}
+.state{display:inline-flex;align-items:center;gap:.5rem;padding:.125rem .625rem;border:1.5px solid var(--high);border-radius:var(--radius);color:var(--high);font:700 .8125rem/1.6 var(--mono)}
+.meta{display:flex;flex-wrap:wrap;gap:.25rem 1.5rem;margin-top:.75rem;color:var(--muted);font:.8125rem/1.6 var(--mono)}
+.meta dt{display:inline;color:var(--muted)}
+.meta dd{display:inline;margin-left:.5ch;color:var(--ink)}
+
+/* glyph square */
+.g{display:inline-grid;place-items:center;flex:none;width:1.25rem;height:1.25rem;border:1.5px solid currentColor;border-radius:var(--radius-s);font:700 .75rem/1 var(--mono)}
+.g.solid{background:currentColor}
+.g.solid::after{content:attr(data-c);color:var(--surface)}
+.c-high{color:var(--high)}.c-med{color:var(--medium)}.c-low{color:var(--low)}.c-info{color:var(--info)}.c-ink{color:var(--ink)}.c-muted{color:var(--muted)}.c-acc{color:var(--accent)}
+
+/* pipeline graph */
+.sect{margin-top:2rem}
+.sect>h2{display:flex;align-items:baseline;gap:.75rem;margin-bottom:.75rem;font:700 .8125rem/1.6 var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.sect>h2 span{text-transform:none;letter-spacing:0;font-weight:400}
+.pipe{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;counter-reset:st}
+.stage{position:relative;padding:.75rem .875rem;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);min-width:0}
+.stage+.stage{margin-left:1.25rem}
+.stage+.stage::before{content:"";position:absolute;left:calc(-1.25rem - 1px);top:1.375rem;width:1.25rem;border-top:1.5px solid var(--line)}
+.stage h3{display:flex;align-items:center;gap:.5rem;font:700 .8125rem/1.4 var(--mono)}
+.stage p{margin-top:.375rem;color:var(--muted);font-size:.8125rem;line-height:1.6;overflow-wrap:anywhere}
+.stage.hot{border-color:var(--ink)}
+@media (max-width:51.99rem){
+  .pipe{grid-template-columns:minmax(0,1fr)}
+  .stage+.stage{margin-left:0;margin-top:.875rem}
+  .stage+.stage::before{left:1.375rem;top:calc(-.875rem - 1px);width:0;height:.875rem;border-top:0;border-left:1.5px solid var(--line)}
+}
+
+/* two-column body */
+.cols{display:grid;grid-template-columns:minmax(0,1fr);gap:2rem}
+@media (min-width:60rem){.cols{grid-template-columns:minmax(0,5fr) minmax(0,7fr)}}
+.box{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
+.box>li,.box>div{display:flex;align-items:flex-start;gap:.75rem;padding:.625rem .875rem;border-top:1px solid var(--line)}
+.box>:first-child{border-top:0}
+.box .txt{min-width:0;flex:1}
+.box .k{font-weight:700}
+.box .sub{display:block;color:var(--muted);font-size:.8125rem;line-height:1.6}
+.box .n{margin-left:auto;font:700 .875rem/1.4 var(--mono);white-space:nowrap;font-variant-numeric:tabular-nums}
+
+/* annotations */
+.ann .loc{display:block;font:.8125rem/1.6 var(--mono);color:var(--accent);overflow-wrap:anywhere}
+.ann .t{display:block;font-weight:700;line-height:1.55}
+.ann .why{display:block;color:var(--muted);font:.75rem/1.6 var(--mono)}
+.ann .ex{background:var(--mark)}
+.ann a{text-decoration:none}
+.ann a:hover .t{text-decoration:underline}
+
+/* job log */
+.log{border:1px solid var(--line);border-radius:var(--radius);background:var(--term);font:.8125rem/1.75 var(--mono);counter-reset:ln}
+.log-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.25rem 1rem;padding:.5rem .875rem;border-bottom:1px solid var(--line);font-weight:700}
+.log-head span{color:var(--muted);font-weight:400}
+.log ol{padding:.5rem 0}
+.log li{display:grid;grid-template-columns:3.5ch minmax(0,1fr);gap:0 1.25ch;padding-inline:.5rem .875rem}
+.log li::before{counter-increment:ln;content:counter(ln);color:var(--muted);text-align:right;opacity:.7;user-select:none}
+.log li>span{overflow-wrap:anywhere;white-space:pre-wrap}
+.log .grp{margin-top:.25rem;font-weight:700}
+.log .grp:first-child{margin-top:0}
+.log .lab{color:var(--muted)}
+.log .key{background:var(--mark)}
+.log .jp{font-family:var(--sans)}
+
+.foot{margin-block:3rem 4rem;padding-top:1rem;border-top:1px solid var(--line);color:var(--muted);font-size:.8125rem}
+
+@media print{
+  :root:not([data-theme="light"]),:root[data-theme]{color-scheme:light;--bg:#fff;--surface:#fff;--term:#f4f5f7;--ink:#12161c;--muted:#545d68;--line:#d3d8df;--accent:#1f3f66;--mark:#dfe7f2;--high:#8a1c1c;--medium:#7a4800;--low:#24476e;--info:#5a5a5a}
+  .wrap{max-width:none;padding-inline:0}
+  .runbar{background:none}
+  .pipe{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .stage+.stage{margin:0 0 0 .75rem}
+  .stage+.stage::before{display:none}
+  .cols{grid-template-columns:minmax(0,1fr)}
+  .stage,.box>*,.log li{break-inside:avoid}
+  .g.solid,.log,.ann .ex,.log .key{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
+</style>
+</head>
+<body>
+<header class="runbar">
+  <div class="wrap">
+    <p class="crumb"><span class="perm" aria-hidden="true">r--</span><span>agentic-scan</span><span class="sep">/</span><b>security-scan</b><span class="sep">/</span><span>run</span></p>
+    <div class="title-row">
+      <h1>注文管理アプリ（架空のサンプル）</h1>
+      <span class="state"><span class="g solid" data-c="✕" aria-hidden="true"></span>未解決の High 2 件</span>
+    </div>
+    <dl class="meta">
+      <div><dt>commit</dt><dd>demo-revision (架空)</dd></div>
+      <div><dt>date</dt><dd>2026-10-06 <span class="c-muted">(時刻の記録なし)</span></dd></div>
+      <div><dt>scope</dt><dd>src/api/ の注文・レポート API と依存関係の記録</dd></div>
+      <div><dt>mode</dt><dd>read-only · 静的なソースレビュー</dd></div>
+    </dl>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="sect" aria-labelledby="h-pipe">
+    <h2 id="h-pipe">Pipeline <span>5 stages · すべて完了</span></h2>
+    <ol class="pipe">
+      <li class="stage"><h3><span class="g c-ink" aria-label="完了">✓</span>RECON</h3><p>src/api/ の注文・レポート API と依存関係の記録</p></li>
+      <li class="stage"><h3><span class="g c-ink" aria-label="完了">✓</span>CHECKLIST</h3><p>観点 6 · うち対象外 1</p></li>
+      <li class="stage"><h3><span class="g c-ink" aria-label="完了">✓</span>REVIEW</h3><p>指摘 7 件を記録</p></li>
+      <li class="stage hot"><h3><span class="g c-ink" aria-label="完了">✓</span>VERIFY</h3><p>Valid 2 · Likely 1 · Unverified 3 · FalsePositive 1</p></li>
+      <li class="stage"><h3><span class="g c-ink" aria-label="完了">✓</span>REPORT</h3><p>dashboard.html · assessment.html</p></li>
+    </ol>
+  </section>
+
+  <div class="cols">
+    <div>
+      <section class="sect" aria-labelledby="h-sum">
+        <h2 id="h-sum">Summary <span>重大度別 · 未解決 / 件数</span></h2>
+        <ul class="box">
+          <li><span class="g solid c-high" data-c="✕" aria-hidden="true"></span><span class="txt"><span class="k c-high">High</span><span class="sub">F-001 · D-001</span></span><span class="n c-high">2 / 2</span></li>
+          <li><span class="g solid c-med" data-c="!" aria-hidden="true"></span><span class="txt"><span class="k c-med">Medium</span><span class="sub">F-002</span></span><span class="n c-med">1 / 1</span></li>
+          <li><span class="g c-low" aria-hidden="true">✓</span><span class="txt"><span class="k c-low">Low</span><span class="sub">F-003 Fixed · F-005 Accepted</span></span><span class="n c-low">0 / 2</span></li>
+          <li><span class="g c-info" aria-hidden="true">i</span><span class="txt"><span class="k c-info">Info</span><span class="sub">F-006</span></span><span class="n c-info">1 / 1</span></li>
+          <li><span class="g c-acc" aria-hidden="true">–</span><span class="txt"><span class="k c-acc">excluded</span><span class="sub">F-004 FalsePositive · 記録は保持</span></span><span class="n c-acc">1</span></li>
+        </ul>
+      </section>
+
+      <section class="sect" aria-labelledby="h-mx">
+        <h2 id="h-mx">Matrix <span>観点ごとの結果</span></h2>
+        <ul class="box">
+          <li><span class="g solid c-high" data-c="✕" aria-hidden="true"></span><span class="txt"><span class="k">利用者・テナント境界</span><span class="sub">High 1 件 — 注文詳細の所有者確認をレビュー</span></span></li>
+          <li><span class="g c-acc" aria-hidden="true">✓</span><span class="txt"><span class="k">入力処理</span><span class="sub">疑い 1 件を誤検知として除外 — 固定の許可リストと値の流れを確認</span></span></li>
+          <li><span class="g c-med" aria-hidden="true">!</span><span class="txt"><span class="k">依存関係</span><span class="sub">適用条件の検証が必要 — ライブラリの実際の呼び出し経路は未確認</span></span></li>
+          <li><span class="g solid c-med" data-c="!" aria-hidden="true"></span><span class="txt"><span class="k">可用性</span><span class="sub">Medium 1 件 — 上流の流量・件数制限は未確認</span></span></li>
+          <li><span class="g c-muted" aria-hidden="true">–</span><span class="txt"><span class="k c-muted">ファイル処理</span><span class="sub">対象外 — レビュー対象にはファイルアップロード機能がありません</span></span></li>
+          <li><span class="g c-info" aria-hidden="true">?</span><span class="txt"><span class="k">プライバシー</span><span class="sub">未確認の範囲あり — ログ基盤の設定は今回の診断対象外</span></span></li>
+        </ul>
+      </section>
+    </div>
+
+    <div>
+      <section class="sect" aria-labelledby="h-ann">
+        <h2 id="h-ann">Annotations <span>7 件 · 記録順</span></h2>
+        <ul class="box ann">
+          <li><span class="g solid c-high" data-c="✕" aria-label="High"></span><a class="txt" href="#log"><span class="loc">src/api/orders.py:42</span><span class="t">注文詳細 API に所有者の確認がない</span><span class="why">F-001 · Valid · Confirmed · Open</span></a></li>
+          <li><span class="g solid c-high" data-c="✕" aria-label="High"></span><span class="txt"><span class="loc">package-lock.json:18</span><span class="t">HTTP クライアントの報告された脆弱性が適用されるか未確認</span><span class="why">D-001 · Unverified · Environment-dependent · Open</span></span></li>
+          <li><span class="g solid c-med" data-c="!" aria-label="Medium"></span><span class="txt"><span class="loc">src/api/pagination.py:7</span><span class="t">一覧 API の取得件数に上限がない</span><span class="why">F-002 · Likely · Confirmed · Open</span></span></li>
+          <li><span class="g c-low" aria-label="Low">✓</span><span class="txt"><span class="loc">deploy/php.ini:9</span><span class="t">デプロイ設定のデバッグ出力</span><span class="why">F-003 · Unverified · Environment-dependent · Fixed</span></span></li>
+          <li class="ex"><span class="g c-acc" aria-label="High, 除外">–</span><span class="txt"><span class="loc">src/api/reports.py:88</span><span class="t">レポート検索の SQL 断片（誤検知）</span><span class="why">F-004 · High · FalsePositive · 集計から除外</span></span></li>
+          <li><span class="g c-low" aria-label="Low">✓</span><span class="txt"><span class="loc">src/api/middleware.py:23</span><span class="t">内部用の診断ヘッダーが応答に含まれる</span><span class="why">F-005 · Valid · Confirmed · Accepted</span></span></li>
+          <li><span class="g c-info" aria-label="Info">i</span><span class="txt"><span class="loc">docs/logging.md:12</span><span class="t">監査ログの保存期間が記録されていない</span><span class="why">F-006 · Unverified · Suspected · Open</span></span></li>
+        </ul>
+      </section>
+
+      <section class="sect" id="log" aria-labelledby="h-log">
+        <h2 id="h-log">Log <span>F-001 の工程</span></h2>
+        <div class="log">
+          <p class="log-head">F-001 · 注文詳細 API に所有者の確認がない <span>High · Confirmed</span></p>
+          <ol>
+            <li class="grp"><span>▸ REVIEW</span></li>
+            <li><span><span class="lab">category </span><span class="jp">利用者・テナント境界</span></span></li>
+            <li class="key"><span><span class="lab">location </span>src/api/orders.py:42</span></li>
+            <li><span><span class="lab">request  </span>GET /orders/{id}</span></li>
+            <li><span><span class="lab">actor    </span><span class="jp">ログイン済みの顧客</span></span></li>
+            <li><span><span class="lab">impact   </span><span class="jp">別の顧客の注文内容を閲覧できる可能性があります。</span></span></li>
+            <li class="grp"><span>▸ VERIFY</span></li>
+            <li><span><span class="lab">method   </span>review</span></li>
+            <li class="key"><span><span class="lab">evidence </span><span class="jp">この架空例では、ルートは顧客ロールに公開されています。ハンドラーは主キーだけで注文を取得し、所有者による絞り込みがありません。応答には注文詳細が含まれます。</span></span></li>
+            <li><span><span class="lab">verdict  </span><b>Valid</b></span></li>
+            <li class="grp"><span>▸ FIX</span></li>
+            <li class="key"><span><span class="jp">注文の取得条件にログイン中のアカウント ID を含めます。自分の注文は取得でき、他人の注文は取得できないことを回帰テストで確認します。</span></span></li>
+          </ol>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <p class="foot">このファイルのアプリ・指摘・根拠はすべて架空です。デプロイ済みの設定、実行環境、ゲートウェイ、監査ログ基盤は確認していません。</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>security-scan session record</title>
+<style>
+/* 01 terminal session record — tokens copied from site/styles.css */
+:root{color-scheme:light;--bg:#f4f5f7;--surface:#fff;--term:#eceef2;--ink:#12161c;--muted:#545d68;--line:#d3d8df;--accent:#1f3f66;--mark:#dfe7f2;--high:#8a1c1c;--medium:#7a4800;--low:#24476e;--info:#5a5a5a;
+--mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono","Hiragino Sans","Noto Sans JP",monospace;
+--sans:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+--fs-term:0.8125rem;--gutter:1rem;--radius:4px;--radius-s:2px}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#0f1217;--surface:#151a21;--term:#0a0d11;--ink:#e3e7ec;--muted:#9ba4ae;--line:#29313b;--accent:#a9c3e6;--mark:#1a2638;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#0f1217;--surface:#151a21;--term:#0a0d11;--ink:#e3e7ec;--muted:#9ba4ae;--line:#29313b;--accent:#a9c3e6;--mark:#1a2638;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4}
+@media (min-width:48rem){:root{--gutter:2rem;--fs-term:0.875rem}}
+
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:1rem/1.85 var(--sans);-webkit-text-size-adjust:100%}
+h1,h2,p,pre,dl,dd,ol{margin:0}
+ol{padding:0;list-style:none}
+a{color:var(--accent);text-underline-offset:.2em}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:var(--radius-s)}
+
+.wrap{max-width:calc(56rem + 2*var(--gutter));margin-inline:auto;padding:2rem var(--gutter) 4rem}
+.top{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:.25rem 1rem;padding-bottom:1rem;border-bottom:1px solid var(--line)}
+.wordmark{display:inline-flex;align-items:center;gap:.5rem;font:700 1rem/1.4 var(--mono)}
+.perm{padding:0 .25rem;border-radius:var(--radius-s);background:var(--ink);color:var(--bg);font-size:.75rem;line-height:1.6;letter-spacing:.04em}
+.top h1{font:400 .875rem/1.6 var(--mono);color:var(--muted)}
+.top h1 b{color:var(--ink)}
+
+/* one turn of the session: the command, its output, a human note */
+.turn{margin-top:2rem}
+.cmd{font:700 var(--fs-term)/1.75 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.ps{color:var(--muted);font-weight:400;user-select:none}
+.out{margin-top:.5rem;padding:.75rem 1rem;border:1px solid var(--line);border-radius:var(--radius);background:var(--term);font:var(--fs-term)/1.75 var(--mono)}
+.note{margin-top:.5rem;padding-left:.75rem;border-left:2px solid var(--line);color:var(--muted);font-size:.875rem;line-height:1.8}
+.note b{color:var(--ink);font-family:var(--mono);font-weight:700}
+
+/* key<TAB>value output */
+.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:0 2ch}
+.kv dt{color:var(--muted)}
+.kv dd{overflow-wrap:anywhere}
+.kv .hl{margin-inline:-1rem;padding-inline:1rem;background:var(--mark)}
+.kv dt.hl{margin-right:0;padding-right:0}
+.kv dd.hl{margin-left:-2ch;padding-left:2ch}
+.tag{margin-left:1ch;padding:0 .25rem;border:1px solid currentColor;border-radius:var(--radius-s);color:var(--accent);font:700 .6875rem/1.5 var(--sans)}
+
+/* severity count output, with a renderer-drawn bar */
+.counts{display:grid;grid-template-columns:7ch 2ch minmax(0,1fr);gap:0 2ch;align-items:center}
+.counts .bar{display:block;height:.5em;width:calc(var(--n) * 2.5rem);max-width:100%;background:currentColor;opacity:.5}
+
+/* column -t output: wraps into two lines below 40rem */
+.rows{display:grid}
+.row{display:grid;grid-template-columns:6ch 7ch 14ch 9ch minmax(0,1fr);gap:0 1ch;color:inherit;text-decoration:none}
+.row>span{overflow-wrap:anywhere}
+a.row:hover .id{text-decoration:underline}
+.row .id{color:var(--accent)}
+.row.fp{margin-inline:-1rem;padding-inline:1rem;background:var(--mark)}
+.v-fp{color:var(--accent);font-weight:700}
+.v-ok{font-weight:700}
+.dim{color:var(--muted)}
+.s-high{color:var(--high);font-weight:700}
+.s-med{color:var(--medium);font-weight:700}
+.s-low{color:var(--low);font-weight:700}
+.s-info{color:var(--info);font-weight:700}
+@media (max-width:39.99rem){
+  .row{grid-template-columns:6ch 7ch minmax(0,1fr) auto;grid-template-areas:"id sev ver ver" ". loc loc st";padding-block:.25rem;border-bottom:1px dashed var(--line)}
+  .row:last-child{border-bottom:0}
+  .row>:nth-child(1){grid-area:id}.row>:nth-child(2){grid-area:sev}.row>:nth-child(3){grid-area:ver}
+  .row>:nth-child(4){grid-area:st;color:var(--muted)}
+  .row .loc{grid-area:loc}
+  .kv{grid-template-columns:minmax(0,1fr)}
+  .kv dd{padding-left:2ch;margin-bottom:.25rem}
+  .kv dt.hl{margin-right:-1rem;padding-right:1rem}
+  .kv dd.hl{margin-left:-1rem;padding-left:calc(1rem + 2ch);margin-bottom:0;padding-bottom:.25rem}
+}
+
+.end{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);color:var(--muted);font-size:.8125rem;line-height:1.8}
+.end ul{margin:.25rem 0 0;padding-left:1.25rem}
+.end .ps{font:700 var(--fs-term)/1.75 var(--mono)}
+
+@media print{
+  :root:not([data-theme="light"]),:root[data-theme]{color-scheme:light;--bg:#fff;--surface:#fff;--term:#f4f5f7;--ink:#12161c;--muted:#545d68;--line:#d3d8df;--accent:#1f3f66;--mark:#dfe7f2;--high:#8a1c1c;--medium:#7a4800;--low:#24476e;--info:#5a5a5a}
+  .wrap{max-width:none;padding:0}
+  .turn,.out{break-inside:avoid}
+  .out{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  a{text-decoration:none}
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header class="top">
+    <span class="wordmark"><span class="perm" aria-hidden="true">r--</span>agentic-scan</span>
+    <h1><b>security-scan</b> · session record</h1>
+  </header>
+
+  <section class="turn" aria-labelledby="t1">
+    <h2 class="cmd" id="t1"><span class="ps" aria-hidden="true">$ </span>jq -r '.meta | to_entries[] | "\(.key)\t\(.value)"' findings.json</h2>
+    <dl class="out kv">
+      <dt>project</dt><dd>注文管理アプリ（架空のサンプル）</dd>
+      <dt>date</dt><dd>2026-10-06</dd>
+      <dt>assessor</dt><dd>security-scan / デモ用データ</dd>
+      <dt>scope</dt><dd>src/api/ の注文・レポート API と依存関係の記録</dd>
+      <dt>method</dt><dd>静的なソースレビュー。実環境への通信・攻撃は実施していません。</dd>
+      <dt>commit</dt><dd>demo-revision (架空)</dd>
+      <dt>axis</dt><dd>confirmed</dd>
+    </dl>
+    <p class="note">実行日は <b>2026-10-06</b>。記録に時刻はありません。</p>
+  </section>
+
+  <section class="turn" aria-labelledby="t2">
+    <h2 class="cmd" id="t2"><span class="ps" aria-hidden="true">$ </span>jq -r '["High","Medium","Low","Info"] as $o | [.findings[] | select(.validation.verdict | IN("FalsePositive","NotApplicable") | not)] | group_by(.severity) | sort_by(.[0].severity as $s | $o | index($s))[] | "\(.[0].severity)\t\(length)"' findings.json</h2>
+    <div class="out counts">
+      <span class="s-high">High</span><span>2</span><span class="s-high" aria-hidden="true"><span class="bar" style="--n:2"></span></span>
+      <span class="s-med">Medium</span><span>1</span><span class="s-med" aria-hidden="true"><span class="bar" style="--n:1"></span></span>
+      <span class="s-low">Low</span><span>2</span><span class="s-low" aria-hidden="true"><span class="bar" style="--n:2"></span></span>
+      <span class="s-info">Info</span><span>1</span><span class="s-info" aria-hidden="true"><span class="bar" style="--n:1"></span></span>
+    </div>
+    <p class="note">記録 7 件のうち、誤検知と判定した <b>F-004</b> を除いた 6 件。棒はレンダラーが描き足したもので、コマンドの出力には含まれません。</p>
+  </section>
+
+  <section class="turn" aria-labelledby="t3">
+    <h2 class="cmd" id="t3"><span class="ps" aria-hidden="true">$ </span>jq -r '.findings[] | [.id, .severity, .validation.verdict, (.status // "Open"), .location] | @tsv' findings.json | column -t</h2>
+    <div class="out rows" role="list">
+      <a class="row" role="listitem" href="#t4"><span class="id">F-001</span><span class="s-high">High</span><span class="v-ok">Valid</span><span>Open</span><span class="loc">src/api/orders.py:42</span></a>
+      <div class="row" role="listitem"><span>D-001</span><span class="s-high">High</span><span>Unverified</span><span>Open</span><span class="loc">package-lock.json:18</span></div>
+      <div class="row" role="listitem"><span>F-002</span><span class="s-med">Medium</span><span>Likely</span><span>Open</span><span class="loc">src/api/pagination.py:7</span></div>
+      <div class="row" role="listitem"><span>F-003</span><span class="s-low">Low</span><span>Unverified</span><span class="dim">Fixed</span><span class="loc">deploy/php.ini:9</span></div>
+      <div class="row fp" role="listitem"><span>F-004</span><span class="s-high">High</span><span class="v-fp">FalsePositive</span><span>Open</span><span class="loc">src/api/reports.py:88</span></div>
+      <div class="row" role="listitem"><span>F-005</span><span class="s-low">Low</span><span class="v-ok">Valid</span><span class="dim">Accepted</span><span class="loc">src/api/middleware.py:23</span></div>
+      <div class="row" role="listitem"><span>F-006</span><span class="s-info">Info</span><span>Unverified</span><span>Open</span><span class="loc">docs/logging.md:12</span></div>
+    </div>
+    <p class="note"><b>F-004</b> は消さずに残した誤検知。根拠:「SQL 断片は固定の列名リストだけから構築されます。リクエスト値が断片に入る経路はありません。」</p>
+  </section>
+
+  <section class="turn" id="F-001" aria-labelledby="t4">
+    <h2 class="cmd" id="t4"><span class="ps" aria-hidden="true">$ </span>jq -r '.findings[] | select(.id == "F-001") | paths(scalars) as $p | "\($p | join("."))\t\(getpath($p))"' findings.json</h2>
+    <dl class="out kv">
+      <dt>id</dt><dd>F-001</dd>
+      <dt>title</dt><dd>注文詳細 API に所有者の確認がない</dd>
+      <dt>severity</dt><dd class="s-high">High</dd>
+      <dt>confidence</dt><dd>Confirmed</dd>
+      <dt>category</dt><dd>利用者・テナント境界</dd>
+      <dt class="hl">location</dt><dd class="hl">src/api/orders.py:42<span class="tag">該当</span></dd>
+      <dt>actor</dt><dd>ログイン済みの顧客</dd>
+      <dt>request</dt><dd>GET /orders/{id}</dd>
+      <dt>impact</dt><dd>別の顧客の注文内容を閲覧できる可能性があります。</dd>
+      <dt class="hl">fix</dt><dd class="hl">注文の取得条件にログイン中のアカウント ID を含めます。自分の注文は取得でき、他人の注文は取得できないことを回帰テストで確認します。<span class="tag">修正方針</span></dd>
+      <dt>validation.verdict</dt><dd class="v-ok">Valid</dd>
+      <dt class="hl">validation.evidence</dt><dd class="hl">この架空例では、ルートは顧客ロールに公開されています。ハンドラーは主キーだけで注文を取得し、所有者による絞り込みがありません。応答には注文詳細が含まれます。<span class="tag">根拠</span></dd>
+      <dt>validation.method</dt><dd>review</dd>
+    </dl>
+    <p class="note">塗った 3 行が、直すときに読む場所(該当・根拠・修正方針)。</p>
+  </section>
+
+  <footer class="end">
+    <p><span class="ps" aria-hidden="true">$ </span>記録の限界(limitations より)</p>
+    <ul>
+      <li>このファイルのアプリ・指摘・根拠はすべて架空です。実際のリポジトリを診断した結果ではありません。</li>
+      <li>デプロイ済みの設定、実行環境、ゲートウェイ、監査ログ基盤は確認していません。</li>
+    </ul>
+  </footer>
+</main>
+</body>
+</html>

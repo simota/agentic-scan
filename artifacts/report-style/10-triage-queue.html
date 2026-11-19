@@ -1,0 +1,988 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>security-scan トリアージキュー — 注文管理アプリ（架空のサンプル） | agentic-scan</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --term: #eceef2;
+  --ink: #12161c;
+  --muted: #545d68;
+  --line: #d3d8df;
+  --accent: #1f3f66;
+  --mark: #dfe7f2;
+  --band: #12161c;
+  --band-ink: #e9ecf0;
+  --band-muted: #a7b0bb;
+  --band-accent: #a9c3e6;
+  --high: #8a1c1c;
+  --medium: #7a4800;
+  --low: #24476e;
+  --info: #5a5a5a;
+
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Hiragino Sans", "Noto Sans JP", monospace;
+  --sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+
+  --s1: 0.25rem;
+  --s2: 0.5rem;
+  --s3: 0.75rem;
+  --s4: 1rem;
+  --s5: 1.5rem;
+  --s6: 2rem;
+  --radius: 4px;
+  --radius-s: 2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f1217;
+    --surface: #151a21;
+    --term: #0a0d11;
+    --ink: #e3e7ec;
+    --muted: #9ba4ae;
+    --line: #29313b;
+    --accent: #a9c3e6;
+    --mark: #1a2638;
+    --band: #151a21;
+    --band-ink: #e3e7ec;
+    --band-muted: #9ba4ae;
+    --band-accent: #a9c3e6;
+    --high: #f2a19a;
+    --medium: #e8bf7a;
+    --low: #a9c3e6;
+    --info: #b3aea4;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1217;
+  --surface: #151a21;
+  --term: #0a0d11;
+  --ink: #e3e7ec;
+  --muted: #9ba4ae;
+  --line: #29313b;
+  --accent: #a9c3e6;
+  --mark: #1a2638;
+  --band: #151a21;
+  --band-ink: #e3e7ec;
+  --band-muted: #9ba4ae;
+  --band-accent: #a9c3e6;
+  --high: #f2a19a;
+  --medium: #e8bf7a;
+  --low: #a9c3e6;
+  --info: #b3aea4;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+h1, h2, h3, h4, p, dl, dd, ul, ol { margin: 0; }
+code, pre { font-family: var(--mono); }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-s); }
+
+/* Header Bar */
+.topbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.topbar-in {
+  max-width: 86rem;
+  margin-inline: auto;
+  padding: var(--s3) var(--s4);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2) var(--s4);
+}
+.brand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  font-family: var(--mono);
+  min-width: 0;
+}
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-weight: 700;
+  font-size: 0.9375rem;
+}
+.perm {
+  padding: 0 0.35rem;
+  border-radius: var(--radius-s);
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.6;
+}
+.crumb {
+  color: var(--accent);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+.topbar-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.btn-sm {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.25rem 0.6rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--ink);
+}
+.btn-sm:hover { border-color: var(--ink); }
+
+/* Main Container */
+.wrap {
+  max-width: 86rem;
+  margin-inline: auto;
+  padding: var(--s4) var(--s4) var(--s6);
+  display: grid;
+  gap: var(--s5);
+}
+
+/* Queue Header + Severity Filter Bar */
+.queue-head {
+  display: grid;
+  gap: var(--s3);
+}
+.qh-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s2) var(--s4);
+}
+.qh-top h1 {
+  font-size: clamp(1.25rem, 1rem + 1vw, 1.625rem);
+  font-weight: 800;
+  line-height: 1.3;
+}
+.qh-meta {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.sev-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.sev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.3rem 0.65rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--ink);
+}
+.sev-chip:hover { border-color: var(--ink); }
+.sev-chip[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.sev-chip[aria-pressed="true"] .dot { background: var(--bg); }
+.sev-chip strong { font-variant-numeric: tabular-nums; }
+.dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex: none;
+}
+.dot-high { background: var(--high); }
+.dot-medium { background: var(--medium); }
+.dot-low { background: var(--low); }
+.dot-info { background: var(--info); }
+.sev-summary-note {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* Kanban Board */
+.board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s4);
+  align-items: start;
+}
+.lane {
+  background: var(--term);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s3);
+  min-width: 0;
+}
+.lane-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--s2);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--line);
+}
+.lane-title {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.lane-fix .lane-title { color: var(--high); }
+.lane-verify .lane-title { color: var(--medium); }
+.lane-closed .lane-title { color: var(--low); }
+.lane-excluded .lane-title { color: var(--accent); }
+.lane-count {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.lane-desc {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: calc(-1 * var(--s2));
+}
+.cards {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: var(--s2);
+}
+
+/* Ticket Card */
+.ticket {
+  width: 100%;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  padding: var(--s3);
+  display: grid;
+  gap: var(--s2);
+}
+.ticket.sev-High { border-left-color: var(--high); }
+.ticket.sev-Medium { border-left-color: var(--medium); }
+.ticket.sev-Low { border-left-color: var(--low); }
+.ticket.sev-Info { border-left-color: var(--info); }
+.ticket.is-fp {
+  background: var(--mark);
+  border-style: solid;
+  border-left-style: dashed;
+  border-left-color: var(--accent);
+}
+.ticket:hover { border-color: var(--ink); }
+.ticket[aria-selected="true"] {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.tk-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1) var(--s2);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+}
+.tk-id { font-weight: 700; }
+.tk-sev { font-weight: 700; }
+.tk-sev.High { color: var(--high); }
+.tk-sev.Medium { color: var(--medium); }
+.tk-sev.Low { color: var(--low); }
+.tk-sev.Info { color: var(--info); }
+.tk-part {
+  margin-left: auto;
+  padding: 0 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  color: var(--muted);
+}
+.tk-title {
+  font-weight: 700;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--ink);
+}
+.tk-loc {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.tk-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+}
+.tag {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  padding: 0.05rem 0.35rem;
+  color: var(--muted);
+}
+.tag.fp {
+  background: var(--surface);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+.lane-empty {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  padding: var(--s2) 0;
+}
+
+/* Ticket Detail Inspector */
+.inspector {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.ins-head {
+  background: var(--band);
+  color: var(--band-ink);
+  padding: var(--s3) var(--s4);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s2) var(--s4);
+}
+.ins-head-left {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+}
+.ins-lane-pill {
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-s);
+  background: var(--band-accent);
+  color: var(--band);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+.copy-btn {
+  background: transparent;
+  border: 1px solid var(--band-muted);
+  border-radius: var(--radius);
+  padding: 0.25rem 0.65rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--band-ink);
+}
+.copy-btn:hover { border-color: var(--band-accent); color: var(--band-accent); }
+
+.ins-body {
+  padding: var(--s4);
+  display: grid;
+  gap: var(--s4);
+}
+.ins-title-block {
+  display: grid;
+  gap: var(--s2);
+  padding-bottom: var(--s3);
+  border-bottom: 1px solid var(--line);
+}
+.ins-title-block h2 {
+  font-size: 1.1875rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+.ins-kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  gap: var(--s2) var(--s4);
+  padding: var(--s3);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  font-size: 0.8125rem;
+}
+.ins-kv dt {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.ins-kv dd {
+  margin-top: 0.15rem;
+  font-family: var(--mono);
+  font-weight: 700;
+}
+.ins-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s4);
+}
+.ins-sec h3 {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  margin-bottom: var(--s1);
+}
+.ins-action-box {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-s);
+  padding: var(--s3);
+}
+.ins-hist {
+  margin-top: var(--s2);
+  padding: var(--s2) var(--s3);
+  background: var(--term);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  font-size: 0.8125rem;
+}
+
+/* Triage Footer Cards (Decisions & Next Steps) */
+.triage-foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s4);
+}
+.memo-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--s4);
+  display: grid;
+  gap: var(--s2);
+}
+.memo-card h2 {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+.memo-card ul, .memo-card ol {
+  padding-left: 1.25rem;
+  display: grid;
+  gap: var(--s1);
+  font-size: 0.875rem;
+}
+
+.foot {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s3);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+
+@media (min-width: 48rem) {
+  .board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ins-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .triage-foot { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 72rem) {
+  .board { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media print {
+  :root, :root[data-theme="dark"] {
+    color-scheme: light;
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --term: #f4f5f7;
+    --ink: #12161c;
+    --muted: #545d68;
+    --line: #d3d8df;
+    --accent: #1f3f66;
+    --mark: #dfe7f2;
+    --band: #ffffff;
+    --band-ink: #12161c;
+    --band-muted: #545d68;
+    --band-accent: #1f3f66;
+    --high: #8a1c1c;
+    --medium: #7a4800;
+    --low: #24476e;
+    --info: #5a5a5a;
+  }
+  body { background: #ffffff; font-size: 10pt; }
+  .btn-sm, .copy-btn { display: none !important; }
+  .board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lane, .inspector, .memo-card { break-inside: avoid; }
+  .ins-head { border-bottom: 1px solid var(--ink); }
+  .ins-lane-pill { border: 1px solid var(--ink); background: transparent; color: var(--ink); }
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="brand">
+      <span class="wordmark"><span class="perm" aria-hidden="true">r--</span>agentic-scan</span>
+      <span class="crumb">/ security-scan</span>
+    </div>
+    <div class="topbar-tools">
+      <span>2026-10-06</span>
+      <span>demo-revision (架空)</span>
+      <button type="button" class="btn-sm" id="theme-toggle">theme</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="queue-head" aria-labelledby="page-title">
+    <div class="qh-top">
+      <h1 id="page-title">注文管理アプリ（架空のサンプル）</h1>
+      <span class="qh-meta">scope: src/api/ の注文・レポート API と依存関係の記録 · read-only</span>
+    </div>
+
+    <div class="sev-bar" role="group" aria-label="重大度サマリと絞り込み">
+      <button type="button" class="sev-chip" data-sev="ALL" aria-pressed="true">ALL <strong>7</strong></button>
+      <button type="button" class="sev-chip" data-sev="High" aria-pressed="false"><span class="dot dot-high"></span>High <strong>2</strong><span style="opacity:.75">(+除外1)</span></button>
+      <button type="button" class="sev-chip" data-sev="Medium" aria-pressed="false"><span class="dot dot-medium"></span>Medium <strong>1</strong></button>
+      <button type="button" class="sev-chip" data-sev="Low" aria-pressed="false"><span class="dot dot-low"></span>Low <strong>2</strong></button>
+      <button type="button" class="sev-chip" data-sev="Info" aria-pressed="false"><span class="dot dot-info"></span>Info <strong>1</strong></button>
+      <span class="sev-summary-note">集計対象 6 件（未対応の高・中: 3 件）· 除外 1 件</span>
+    </div>
+  </section>
+
+  <!-- 4-Lane Triage Queue -->
+  <section class="board" aria-label="行動別トリアージキュー">
+    <div class="lane lane-fix">
+      <div class="lane-head">
+        <span class="lane-title">1. FIX NOW / 修正計画</span>
+        <span class="lane-count" id="cnt-fix">0</span>
+      </div>
+      <p class="lane-desc">Valid・Confirmed で修正方針へ進める指摘</p>
+      <ul class="cards" id="lane-fix"></ul>
+    </div>
+
+    <div class="lane lane-verify">
+      <div class="lane-head">
+        <span class="lane-title">2. VERIFY FIRST / 先に検証</span>
+        <span class="lane-count" id="cnt-verify">0</span>
+      </div>
+      <p class="lane-desc">適用条件・上流設定の確認が必要な未対応</p>
+      <ul class="cards" id="lane-verify"></ul>
+    </div>
+
+    <div class="lane lane-closed">
+      <div class="lane-head">
+        <span class="lane-title">3. CLOSED / 対応済・受容</span>
+        <span class="lane-count" id="cnt-closed">0</span>
+      </div>
+      <p class="lane-desc">Fixed / Accepted（再確認・再判断の記録あり）</p>
+      <ul class="cards" id="lane-closed"></ul>
+    </div>
+
+    <div class="lane lane-excluded">
+      <div class="lane-head">
+        <span class="lane-title">4. EXCLUDED / 誤検知・除外</span>
+        <span class="lane-count" id="cnt-excluded">0</span>
+      </div>
+      <p class="lane-desc">FalsePositive として根拠つきで保持</p>
+      <ul class="cards" id="lane-excluded"></ul>
+    </div>
+  </section>
+
+  <!-- Selected Ticket Inspector -->
+  <section class="inspector" aria-live="polite" aria-labelledby="ins-title">
+    <div class="ins-head">
+      <div class="ins-head-left">
+        <span class="ins-lane-pill" id="ins-lane">FIX NOW</span>
+        <strong id="ins-id">F-001</strong>
+        <span id="ins-cat">利用者・テナント境界</span>
+      </div>
+      <button type="button" class="copy-btn" id="copy-ticket">Issue / LLM 用にコピー</button>
+    </div>
+    <div class="ins-body" id="ins-body"></div>
+  </section>
+
+  <!-- Decisions, Next Steps & Limitations -->
+  <section class="triage-foot" aria-label="意思決定と制約">
+    <div class="memo-card">
+      <h2>DECISIONS &amp; NEXT STEPS（判断と対応順）</h2>
+      <ul>
+        <li><strong>要判断:</strong> スタッフが他の担当者のアーカイブ済み注文を閲覧できるべきか、仕様を確定してください。</li>
+      </ul>
+      <ol>
+        <li>F-001 の所有者確認を修正し、アクセス境界の回帰テストを追加します。</li>
+        <li>D-001 と F-002 の適用条件を確認し、現在の判定と根拠を更新します。</li>
+        <li>F-003 の修正が対象環境に反映されたかを確認します。</li>
+      </ol>
+    </div>
+
+    <div class="memo-card">
+      <h2>SCOPE &amp; LIMITATIONS（前提と制約）</h2>
+      <ul>
+        <li><strong>問題なし確認済:</strong> レビューした検索クエリはパラメーターをバインドしています。</li>
+        <li>このファイルのアプリ・指摘・根拠はすべて架空です。実際のリポジトリを診断した結果ではありません。</li>
+        <li>デプロイ済みの設定、実行環境、ゲートウェイ、監査ログ基盤は確認していません。</li>
+        <li>外部の脆弱性データベースへの問い合わせは実施していません。依存関係の網羅性は保証しません。</li>
+      </ul>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <span>r-- agentic-scan · security-scan · static read-only triage queue</span>
+    <span>Pattern 10: Triage Queue</span>
+  </footer>
+</main>
+
+<script>
+(function () {
+  var FINDINGS = [
+    {
+      id: "F-001",
+      part: "code",
+      lane: "fix",
+      laneLabel: "FIX NOW / 修正計画",
+      title: "注文詳細 API に所有者の確認がない",
+      severity: "High",
+      confidence: "Confirmed",
+      status: "Open",
+      category: "利用者・テナント境界",
+      location: "src/api/orders.py:42",
+      actor: "ログイン済みの顧客",
+      request: "GET /orders/{id}",
+      impact: "別の顧客の注文内容を閲覧できる可能性があります。",
+      fix: "注文の取得条件にログイン中のアカウント ID を含めます。自分の注文は取得でき、他人の注文は取得できないことを回帰テストで確認します。",
+      validation: {
+        verdict: "Valid",
+        evidence: "この架空例では、ルートは顧客ロールに公開されています。ハンドラーは主キーだけで注文を取得し、所有者による絞り込みがありません。応答には注文詳細が含まれます。",
+        method: "review"
+      }
+    },
+    {
+      id: "D-001",
+      part: "deps",
+      lane: "verify",
+      laneLabel: "VERIFY FIRST / 先に検証",
+      title: "HTTP クライアントの報告された脆弱性が適用されるか未確認",
+      severity: "High",
+      confidence: "Environment-dependent",
+      status: "Open",
+      category: "依存関係",
+      location: "package-lock.json:18",
+      actor: "適用条件の確認が必要",
+      request: "",
+      impact: "影響を受ける機能が外部入力で呼び出される場合にリスクが生じます。実際の利用経路は未確認です。",
+      fix: "まず対象機能の呼び出し経路とデプロイ済みバージョンを確認します。該当する場合は修正版への更新と互換性テストを計画します。",
+      validation: {
+        verdict: "Unverified",
+        evidence: "デモ用の架空アドバイザリです。依存一覧の記載だけでは適用の有無を判断できません。",
+        method: "auto"
+      },
+      previous_validation: {
+        verdict: "NotApplicable",
+        evidence: "過去の構成では対象機能を使用していませんでした。今回のコードでは再確認が必要です。",
+        method: "review"
+      }
+    },
+    {
+      id: "F-002",
+      part: "code",
+      lane: "verify",
+      laneLabel: "VERIFY FIRST / 先に検証",
+      title: "一覧 API の取得件数に上限がない",
+      severity: "Medium",
+      confidence: "Confirmed",
+      status: "Open",
+      category: "可用性",
+      location: "src/api/pagination.py:7",
+      actor: "ログイン済みの利用者",
+      request: "GET /orders の per_page パラメーター",
+      impact: "大きな取得件数によって応答サイズやデータベース負荷が増えるおそれがあります。上流の制限は未確認です。",
+      fix: "上流の制限を確認し、API 層でも取得件数の上限と既定値を設定します。上限を超える入力と不正な値のテストを追加します。",
+      validation: {
+        verdict: "Likely",
+        evidence: "アプリ内では上限が見当たりません。ゲートウェイによる制限の有無を確認してください。",
+        method: "review"
+      }
+    },
+    {
+      id: "F-006",
+      part: "code",
+      lane: "verify",
+      laneLabel: "VERIFY FIRST / 先に検証",
+      title: "監査ログの保存期間が記録されていない",
+      severity: "Info",
+      confidence: "Suspected",
+      status: "Open",
+      category: "プライバシー",
+      location: "docs/logging.md:12",
+      actor: "",
+      request: "",
+      impact: "",
+      fix: "保存先・保存期間・削除手順の担当者を確認し、運用文書に記録してください。",
+      validation: {
+        verdict: "Unverified",
+        evidence: "対象文書には保存期間がありません。実際のログ基盤の設定は未確認です。",
+        method: "review"
+      }
+    },
+    {
+      id: "F-003",
+      part: "code",
+      lane: "closed",
+      laneLabel: "CLOSED / 対応済・受容",
+      title: "デプロイ設定のデバッグ出力",
+      severity: "Low",
+      confidence: "Environment-dependent",
+      status: "Fixed",
+      category: "設定・デプロイ",
+      location: "deploy/php.ini:9",
+      actor: "",
+      request: "",
+      impact: "",
+      fix: "設定上のデバッグ出力は無効化済みです。デプロイ先で有効になったことは別途確認してください。",
+      validation: {
+        verdict: "Unverified",
+        evidence: "修正済みという対応状況のみ記録されています。実環境への反映は未検証です。",
+        method: "review"
+      }
+    },
+    {
+      id: "F-005",
+      part: "code",
+      lane: "closed",
+      laneLabel: "CLOSED / 対応済・受容",
+      title: "内部用の診断ヘッダーが応答に含まれる",
+      severity: "Low",
+      confidence: "Confirmed",
+      status: "Accepted",
+      category: "情報公開",
+      location: "src/api/middleware.py:23",
+      actor: "",
+      request: "",
+      impact: "内部のビルド識別子が表示されます。",
+      fix: "",
+      validation: {
+        verdict: "Valid",
+        evidence: "架空の開発環境内に限定して残す判断が記録されています。本番利用時は再判断が必要です。",
+        method: "review"
+      }
+    },
+    {
+      id: "F-004",
+      part: "code",
+      lane: "excluded",
+      laneLabel: "EXCLUDED / 誤検知・除外",
+      title: "レポート検索の SQL 断片（誤検知）",
+      severity: "High",
+      confidence: "Suspected",
+      status: "Excluded",
+      category: "入力処理",
+      location: "src/api/reports.py:88",
+      actor: "",
+      request: "",
+      impact: "",
+      fix: "",
+      validation: {
+        verdict: "FalsePositive",
+        evidence: "SQL 断片は固定の列名リストだけから構築されます。リクエスト値が断片に入る経路はありません。",
+        method: "review"
+      }
+    }
+  ];
+
+  var selectedId = "F-001";
+  var sevFilter = "ALL";
+  var lanes = ["fix", "verify", "closed", "excluded"];
+
+  function esc(s) {
+    return String(s || "").replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function renderInspector(f) {
+    document.getElementById("ins-lane").textContent = f.laneLabel;
+    document.getElementById("ins-id").textContent = f.id;
+    document.getElementById("ins-cat").textContent = f.category;
+
+    var isFp = f.validation.verdict === "FalsePositive";
+    var html = '' +
+      '<div class="ins-title-block">' +
+        '<h2 id="ins-title">' + esc(f.id) + ' · ' + esc(f.title) + '</h2>' +
+        '<div><code>' + esc(f.location) + '</code></div>' +
+      '</div>' +
+      '<dl class="ins-kv">' +
+        '<div><dt>Severity</dt><dd class="tk-sev ' + esc(f.severity) + '">' + esc(f.severity) + '</dd></div>' +
+        '<div><dt>Confidence</dt><dd>' + esc(f.confidence) + '</dd></div>' +
+        '<div><dt>Verdict</dt><dd>' + esc(f.validation.verdict) + '</dd></div>' +
+        '<div><dt>Status</dt><dd>' + esc(f.status) + '</dd></div>' +
+        '<div><dt>Part</dt><dd>' + esc(f.part) + '</dd></div>' +
+        (f.actor ? '<div><dt>Actor</dt><dd>' + esc(f.actor) + '</dd></div>' : '') +
+        (f.request ? '<div><dt>Request</dt><dd>' + esc(f.request) + '</dd></div>' : '') +
+      '</dl>' +
+      '<div class="ins-cols">' +
+        '<div class="ins-sec">' +
+          '<h3>EVIDENCE（妥当性の根拠 · method: ' + esc(f.validation.method) + '）</h3>' +
+          '<p>' + esc(f.validation.evidence) + '</p>' +
+          (f.previous_validation ? '<div class="ins-hist"><strong>以前の判定（履歴）:</strong> ' + esc(f.previous_validation.verdict) + ' — ' + esc(f.previous_validation.evidence) + '</div>' : '') +
+          (isFp ? '<div class="ins-hist">誤検知（FalsePositive）のため集計対象外。根拠を保持したまま残しています。</div>' : '') +
+        '</div>' +
+        '<div class="ins-sec">' +
+          (f.impact ? '<h3>IMPACT（影響）</h3><p style="margin-bottom:.75rem">' + esc(f.impact) + '</p>' : '') +
+          '<h3>NEXT ACTION / FIX（修正・確認方針）</h3>' +
+          '<div class="ins-action-box">' + esc(f.fix || (isFp ? "対応不要（誤検知として記録済）。" : "記録された対応方針なし。")) + '</div>' +
+        '</div>' +
+      '</div>';
+
+    document.getElementById("ins-body").innerHTML = html;
+  }
+
+  function renderBoard() {
+    var visible = FINDINGS.filter(function (f) {
+      return sevFilter === "ALL" || f.severity === sevFilter;
+    });
+
+    lanes.forEach(function (laneKey) {
+      var items = visible.filter(function (f) { return f.lane === laneKey; });
+      document.getElementById("cnt-" + laneKey).textContent = String(items.length);
+      var ul = document.getElementById("lane-" + laneKey);
+      if (!items.length) {
+        ul.innerHTML = '<li class="lane-empty">該当なし</li>';
+        return;
+      }
+      ul.innerHTML = items.map(function (f) {
+        var isFp = f.validation.verdict === "FalsePositive";
+        var sel = f.id === selectedId;
+        return '<li>' +
+          '<button type="button" class="ticket sev-' + esc(f.severity) + (isFp ? ' is-fp' : '') + '" data-id="' + esc(f.id) + '" aria-selected="' + (sel ? 'true' : 'false') + '">' +
+            '<span class="tk-top">' +
+              '<span class="tk-id">' + esc(f.id) + '</span>' +
+              '<span class="tk-sev ' + esc(f.severity) + '">' + esc(f.severity) + '</span>' +
+              '<span class="tk-part">' + esc(f.part) + '</span>' +
+            '</span>' +
+            '<span class="tk-title">' + esc(f.title) + '</span>' +
+            '<span class="tk-loc">' + esc(f.location) + '</span>' +
+            '<span class="tk-tags">' +
+              '<span class="tag' + (isFp ? ' fp' : '') + '">' + esc(f.validation.verdict) + '</span>' +
+              '<span class="tag">' + esc(f.confidence) + '</span>' +
+              '<span class="tag">' + esc(f.status) + '</span>' +
+            '</span>' +
+          '</button>' +
+        '</li>';
+      }).join("");
+    });
+
+    document.querySelectorAll(".ticket").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        selectedId = btn.getAttribute("data-id");
+        var found = FINDINGS.find(function (x) { return x.id === selectedId; });
+        if (found) renderInspector(found);
+        renderBoard();
+      });
+    });
+  }
+
+  document.querySelectorAll(".sev-chip").forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      sevFilter = chip.getAttribute("data-sev");
+      document.querySelectorAll(".sev-chip").forEach(function (c) {
+        c.setAttribute("aria-pressed", c === chip ? "true" : "false");
+      });
+      var visible = FINDINGS.filter(function (f) { return sevFilter === "ALL" || f.severity === sevFilter; });
+      if (visible.length && !visible.some(function (x) { return x.id === selectedId; })) {
+        selectedId = visible[0].id;
+        renderInspector(visible[0]);
+      }
+      renderBoard();
+    });
+  });
+
+  document.getElementById("copy-ticket").addEventListener("click", function () {
+    var f = FINDINGS.find(function (x) { return x.id === selectedId; });
+    if (!f) return;
+    var text = [
+      "## " + f.id + " · " + f.title,
+      "- Severity: " + f.severity + " / Confidence: " + f.confidence + " / Verdict: " + f.validation.verdict + " / Status: " + f.status,
+      "- Location: " + f.location,
+      "- Evidence: " + f.validation.evidence,
+      f.impact ? "- Impact: " + f.impact : "",
+      f.fix ? "- Fix: " + f.fix : ""
+    ].filter(Boolean).join("\n");
+
+    var btn = document.getElementById("copy-ticket");
+    function done(msg) {
+      btn.textContent = msg;
+      setTimeout(function () { btn.textContent = "Issue / LLM 用にコピー"; }, 1600);
+    }
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function () { done("コピーしました"); }, function () { done("コピーできませんでした"); });
+    } else {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); done("コピーしました"); } catch (e) { done("コピーできませんでした"); }
+      ta.remove();
+    }
+  });
+
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var root = document.documentElement;
+    var dark = root.dataset.theme ? root.dataset.theme === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+  });
+
+  renderInspector(FINDINGS[0]);
+  renderBoard();
+})();
+</script>
+</body>
+</html>

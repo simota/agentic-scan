@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>指摘トレース | security-scan | agentic-scan</title>
+  <style>
+:root {
+  color-scheme: light;
+  --bg: #f4f5f7; --surface: #ffffff; --term: #eceef2; --ink: #12161c;
+  --muted: #545d68; --line: #d3d8df; --accent: #1f3f66; --mark: #dfe7f2;
+  --high: #8a1c1c; --medium: #7a4800; --low: #24476e; --info: #5a5a5a;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Hiragino Sans", "Noto Sans JP", monospace;
+  --sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", Meiryo, system-ui, sans-serif;
+}
+@media screen and (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0f1217; --surface: #151a21; --term: #0a0d11; --ink: #e3e7ec;
+    --muted: #9ba4ae; --line: #29313b; --accent: #a9c3e6; --mark: #1a2638;
+    --high: #f2a19a; --medium: #e8bf7a; --low: #a9c3e6; --info: #b3aea4;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 1rem/1.65 var(--sans); overflow-wrap: anywhere; }
+h1, h2, h3, h4, p, dl, dd, ol { margin: 0; }
+h1, h2, h3, h4 { line-height: 1.35; }
+a { color: var(--accent); text-underline-offset: .22em; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+code, time, .mono { font-family: var(--mono); }
+.page { width: min(100% - 2rem, 72rem); margin-inline: auto; }
+.brand { display: inline-flex; align-items: center; gap: .5rem; font: bold .875rem/1.5 var(--mono); }
+.permission { padding: .05rem .35rem; border-radius: 2px; background: var(--ink); color: var(--bg); }
+.severity { font: bold .75rem/1.5 var(--mono); color: var(--severity); }
+.high { --severity: var(--high); }
+.medium { --severity: var(--medium); }
+.low { --severity: var(--low); }
+.info { --severity: var(--info); }
+.false-positive { color: var(--accent); font-weight: 700; }
+.note { color: var(--muted); font-size: .8125rem; }
+h1 { font: 800 clamp(1.75rem, 4.5vw, 3.25rem)/1.15 var(--mono); }
+h2 { font-size: 1.125rem; }
+footer { margin-top: 1.75rem; padding: .75rem 0 1.5rem; border-top: 1px solid var(--line); }
+@page { size: A4; margin: 13mm; }
+@media print {
+  body { background: var(--surface); font-size: 9pt; line-height: 1.45; }
+  .page { width: 100%; }
+  h1 { font-size: 25pt; }
+  h2, h3, h4 { break-after: avoid; }
+  p { orphans: 2; widows: 2; }
+  .permission { border: 1px solid var(--ink); background: transparent; color: var(--ink); }
+  footer { margin-top: .75rem; padding: .4rem 0 0; }
+  a { color: inherit; }
+}
+
+.instrument { background: var(--term); border-bottom: 1px solid var(--line); }
+.instrument .page { padding-block: 1.25rem; }
+.instrument .mast { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .4rem 1rem; }
+.instrument h1 { margin-top: 1.3rem; }
+.instrument .project { margin-top: .45rem; }
+.instrument .meta { display: flex; flex-wrap: wrap; gap: .3rem 1rem; margin-top: .35rem; }
+.summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: .35rem 1.2rem; margin-top: 1rem; }
+.summary h2 { font-size: .9rem; }
+.severity-counts { display: flex; gap: .25rem .85rem; flex-wrap: wrap; }
+.severity-counts div { display: flex; align-items: baseline; gap: .4rem; }
+.severity-counts dd { font-weight: 700; }
+.workspace { margin-top: 1.25rem; }
+.workspace-head { margin-bottom: .7rem; display: flex; flex-wrap: wrap; gap: .25rem 1rem; justify-content: space-between; align-items: baseline; }
+.trace, .inspector { border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+.trace { --span-columns: minmax(0, 1fr) minmax(0, 11rem) minmax(7rem, 9rem); }
+.column-head, .span { display: grid; grid-template-columns: var(--span-columns); align-items: center; column-gap: .9rem; }
+.column-head { padding: .45rem .8rem; background: var(--term); color: var(--muted); font-size: .78rem; }
+.track-label { text-align: center; }
+.spans { list-style: none; padding: 0; }
+.span { padding: .55rem .8rem; border-top: 1px solid var(--line); min-height: 3.3rem; }
+.span.excluded { background: var(--mark); }
+.span-title { font-size: .86rem; font-weight: 700; }
+.record { display: flex; flex-wrap: wrap; gap: .12rem .6rem; align-items: baseline; font-size: .73rem; color: var(--muted); }
+.outcome { font-size: .75rem; }
+.track { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); align-items: center; height: 1.25rem; position: relative; }
+.track::before { content: ""; grid-area: 1 / 1 / 2 / -1; border-top: 1px solid var(--line); margin-inline: calc(100% / 14); }
+.track-dot { grid-row: 1; grid-column: var(--position); width: .55rem; height: .55rem; justify-self: center; border: 2px solid var(--severity); background: var(--surface); border-radius: 50%; }
+.featured .track-dot { outline: 1px solid var(--accent); outline-offset: 3px; }
+.inspector { margin-top: 1rem; scroll-margin-top: 1rem; }
+.inspector header { padding: .65rem .8rem; border-bottom: 1px solid var(--line); }
+.inspector header h2 { margin-top: .25rem; }
+.steps { display: grid; grid-template-columns: minmax(0, 1fr); list-style: none; padding: .25rem .8rem; }
+.step { position: relative; padding: .65rem .65rem .65rem 1.05rem; border-left: 1px solid var(--line); }
+.step::before { content: ""; position: absolute; inset: .9rem auto auto -.25rem; width: .46rem; height: .46rem; border-radius: 50%; background: var(--surface); border: 1px solid var(--accent); }
+.step h3 { margin-bottom: .22rem; font-size: .8125rem; color: var(--accent); }
+.step p { font-size: .875rem; }
+@media screen and (min-width: 44rem) {
+  .steps { grid-template-columns: minmax(0, 3fr) repeat(2, minmax(0, 5fr)); }
+}
+@media screen and (max-width: 39.99rem) {
+  .column-head { display: none; }
+  .span { grid-template-columns: .6rem minmax(0, 1fr); row-gap: .15rem; column-gap: .65rem; align-items: start; }
+  .span > div:first-child { grid-column: 2; }
+  .track { grid-area: 1 / 1 / 3 / 2; margin-top: .42rem; display: flex; height: auto; justify-content: center; }
+  .track::before { display: none; }
+  .outcome { grid-column: 2; }
+  .span:not(:last-child) { border-left: 1px solid var(--line); }
+}
+@media print {
+  .instrument .page { padding-block: .25rem; }
+  .instrument h1, .summary, .workspace, .inspector { margin-top: .5rem; }
+  .instrument { background: transparent; }
+  .trace { --span-columns: minmax(0, 1fr) minmax(0, 8rem) minmax(6rem, 7rem); }
+  .span { min-height: 0; padding-block: .25rem; break-inside: avoid; }
+  .inspector, .summary { break-inside: avoid; }
+  .steps { padding-block: .1rem; }
+  .step { display: grid; grid-template-columns: 6rem minmax(0, 1fr); gap: .45rem; padding-block: .35rem; }
+}
+  </style>
+</head>
+<body>
+  <header class="instrument">
+    <div class="page">
+      <div class="mast"><div class="brand"><span class="permission" aria-label="読み取り専用">r--</span><span>agentic-scan</span></div><span class="note mono">FINDING TRACE</span></div>
+      <h1>security-scan</h1>
+      <p class="project">注文管理アプリ（架空のサンプル）</p>
+      <div class="meta note"><span>実行日時 <time datetime="2026-10-06">2026-10-06</time>（日付のみ）</span><span>対象範囲 src/api/ の注文・レポート API と依存関係の記録</span></div>
+      <section class="summary" aria-labelledby="summary">
+        <h2 id="summary">重大度別件数</h2>
+        <dl class="severity-counts">
+          <div><dt><span class="severity high">High</span></dt><dd><code>2</code></dd></div>
+          <div><dt><span class="severity medium">Medium</span></dt><dd><code>1</code></dd></div>
+          <div><dt><span class="severity low">Low</span></dt><dd><code>2</code></dd></div>
+          <div><dt><span class="severity info">Info</span></dt><dd><code>1</code></dd></div>
+        </dl>
+        <p class="note">誤検知 1 件は集計対象外。指摘一覧に掲載。</p>
+      </section>
+    </div>
+  </header>
+  <main class="page">
+    <section class="workspace" aria-labelledby="trace-title">
+      <div class="workspace-head">
+        <h2 id="trace-title">指摘一覧 <span class="note">7 件</span></h2>
+        <p class="note">サンプル内の記録順 · 各指摘の時刻と所要時間は未記録</p>
+      </div>
+      <div class="trace">
+        <div class="column-head" aria-hidden="true"><span>指摘</span><span class="track-label">記録順 →</span><span>検証判定</span></div>
+        <ol class="spans" role="list">
+          <li class="span featured">
+            <div>
+              <div class="record"><code>F-001</code><span class="severity high">High</span><code>src/api/orders.py:42</code></div>
+              <p class="span-title"><a href="#detail">注文詳細 API に所有者の確認がない</a></p>
+            </div>
+            <div class="track high" aria-hidden="true"><span class="track-dot" style="--position: 1"></span></div>
+            <div class="outcome"><code>Valid</code></div>
+          </li>
+          <li class="span">
+            <div>
+              <div class="record"><code>D-001</code><span class="severity high">High</span><code>package-lock.json:18</code></div>
+              <p class="span-title">HTTP クライアントの報告された脆弱性が適用されるか未確認</p>
+            </div>
+            <div class="track high" aria-hidden="true"><span class="track-dot" style="--position: 2"></span></div>
+            <div class="outcome"><code>Unverified</code></div>
+          </li>
+          <li class="span">
+            <div>
+              <div class="record"><code>F-002</code><span class="severity medium">Medium</span><code>src/api/pagination.py:7</code></div>
+              <p class="span-title">一覧 API の取得件数に上限がない</p>
+            </div>
+            <div class="track medium" aria-hidden="true"><span class="track-dot" style="--position: 3"></span></div>
+            <div class="outcome"><code>Likely</code></div>
+          </li>
+          <li class="span">
+            <div>
+              <div class="record"><code>F-003</code><span class="severity low">Low</span><code>deploy/php.ini:9</code></div>
+              <p class="span-title">デプロイ設定のデバッグ出力</p>
+            </div>
+            <div class="track low" aria-hidden="true"><span class="track-dot" style="--position: 4"></span></div>
+            <div class="outcome"><code>Unverified</code></div>
+          </li>
+          <li class="span excluded">
+            <div>
+              <div class="record"><code>F-004</code><span class="severity high">High</span><code>src/api/reports.py:88</code></div>
+              <p class="span-title">レポート検索の SQL 断片（誤検知）</p>
+            </div>
+            <div class="track high" aria-hidden="true"><span class="track-dot" style="--position: 5"></span></div>
+            <div class="outcome"><code class="false-positive">FalsePositive</code></div>
+          </li>
+          <li class="span">
+            <div>
+              <div class="record"><code>F-005</code><span class="severity low">Low</span><code>src/api/middleware.py:23</code></div>
+              <p class="span-title">内部用の診断ヘッダーが応答に含まれる</p>
+            </div>
+            <div class="track low" aria-hidden="true"><span class="track-dot" style="--position: 6"></span></div>
+            <div class="outcome"><code>Valid</code></div>
+          </li>
+          <li class="span">
+            <div>
+              <div class="record"><code>F-006</code><span class="severity info">Info</span><code>docs/logging.md:12</code></div>
+              <p class="span-title">監査ログの保存期間が記録されていない</p>
+            </div>
+            <div class="track info" aria-hidden="true"><span class="track-dot" style="--position: 7"></span></div>
+            <div class="outcome"><code>Unverified</code></div>
+          </li>
+        </ol>
+      </div>
+    </section>
+    <article class="inspector" id="detail" aria-labelledby="detail-title">
+      <header>
+        <p class="record"><code>F-001</code><span class="severity high">High</span><code>Valid</code></p>
+        <h2 id="detail-title">注文詳細 API に所有者の確認がない</h2>
+      </header>
+      <ol class="steps" role="list">
+        <li class="step"><h3>該当ファイル</h3><p><code>src/api/orders.py:42</code></p></li>
+        <li class="step"><h3>根拠</h3><p>この架空例では、ルートは顧客ロールに公開されています。ハンドラーは主キーだけで注文を取得し、所有者による絞り込みがありません。応答には注文詳細が含まれます。</p></li>
+        <li class="step"><h3>修正方針</h3><p>注文の取得条件にログイン中のアカウント ID を含めます。自分の注文は取得でき、他人の注文は取得できないことを回帰テストで確認します。</p></li>
+      </ol>
+    </article>
+    <footer class="note">出典 <code>security-scan/examples/findings.sample.ja.json</code> · デモ用データ</footer>
+  </main>
+</body>
+</html>

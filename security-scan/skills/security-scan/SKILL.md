@@ -163,7 +163,7 @@ checklist-only runs, which write no files).
 | Dependencies | RECON: `deps_scan.py <repo> --out <out>/deps.json` for the inventory. End of REVIEW, after the first merge created `findings.json`: `deps_scan.py <repo> --audit --out <out>/deps.json --into <out>/findings.json` once (without `--audit` if the requester declines the advisory query; that lands in limitations). Never create, delete or edit scanner fields of `D-*`; record per-package review only as `validation`/`verification` on the existing ID via `findings.py merge`, after this last `--into`: every rescan replaces `D-*` validation with the scan's automatic triage verdict (or `Unverified`) and keeps the old review as `previous_validation`. Platform end of life is one `F-*` finding under *Dependencies and platform* |
 | Record format | `schema_version: 2`. `scripts/evidence_capture.py` pins the commit and writes the source evidence; every `F-*` finding carries an explicit `validation.verdict` and structured `verification` (four claims, each supported or contradicted claim citing evidence IDs, at least one falsification check). Three-pass coverage, the sequential workflow, integrity receipts and reproduction bundles run only on request |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
-| Outputs | Exactly `findings.json`, `deps.json`, `evidence/`, `dashboard.html`, `assessment.html`, `assessment.pdf` (plus `run/` at expert grade), in the requester's language (scanner-written `D-*` text and the limitation lines quoted in this file stay in English), rendered after the last merge or `--into`. No README, summary PDF or extra audit dumps unless asked (`contract_check.py --allow NAME`). A second-language copy goes in `<out>/<lang>/` (see Independence), never over the primary pages. If `render.py` exits 3 (no PDF engine, or one that failed: its message says which), rerun it where Chrome/Chromium works; if there is still none, merge the limitation "assessment.pdf not produced: no PDF engine" (or the "assessment.pdf not produced: PDF engine failed (…)" line it prints; also the summary's first line), re-run `render.py --repo <repo> --no-pdf`, then `contract_check.py <out> --no-pdf`, which requires that limitation (without `--no-pdf` it rejects that line once `assessment.pdf` exists) |
+| Outputs | Exactly `findings.json`, `deps.json`, `evidence/`, `dashboard.html`, `assessment.html`, `assessment.pdf` (plus `run/` at expert grade), in the report language (*Report language* under Outputs; scanner-written `D-*` text and the limitation lines quoted in this file stay in English), rendered after the last merge or `--into`. No README, summary PDF or extra audit dumps unless asked (`contract_check.py --allow NAME`). A second-language copy goes in `<out>/<lang>/` (see Independence), never over the primary pages. If `render.py` exits 3 (no PDF engine, or one that failed: its message says which), rerun it where Chrome/Chromium works; if there is still none, merge the limitation "assessment.pdf not produced: no PDF engine" (or the "assessment.pdf not produced: PDF engine failed (…)" line it prints; also the summary's first line), re-run `render.py --repo <repo> --no-pdf`, then `contract_check.py <out> --no-pdf`, which requires that limitation (without `--no-pdf` it rejects that line once `assessment.pdf` exists) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)`, `Antigravity (<model>)` |
 | Budget | When the budget runs short, close units in risk order (non-admin reach and crown jewels first) instead of thinning every unit. Each unreached ledger entry is `holds on N/M, rest not read`; `limitations` gives the count of unreached units, entry points and entries |
 | Scratch | A new, empty directory for working records (recon map, ledger, trace rows, fragments), outside both the audited repository and the output directory: the host's session scratch or temp directory when it names one (Claude Code: the scratchpad directory; Codex and Antigravity: a fresh directory under the system temp directory, e.g. `$TMPDIR`), otherwise a sibling of the output directory. Name its path in the chat summary |
@@ -233,8 +233,16 @@ remaining authorized work can be done, and identify the exact dependency.
 | `assessment.html` | The assessment document, print-styled for A4 (the source of the PDF) |
 | `assessment.pdf` | The formal assessment document: cover, summary, overview, perspectives, findings, sound items, limitations, next steps |
 
-Skip the files when only a checklist was asked for. Render them in the
-requester's language (`--lang ja|en`). A copy in a second language is rendered
+Skip the files when only a checklist was asked for.
+
+**Report language.** Write the report in the user's language, chosen in this
+order: (1) a language named in the request or the skill's arguments
+(`lang=ja`, `lang=en`, "in English", "日本語で"); (2) otherwise the language the
+user has set for the agent (a host setting such as Claude Code's `language`,
+or a standing instruction such as "always respond in Japanese"); (3) otherwise
+the language of the request. The renderers produce `ja` and `en`; for any
+other language render `en` and write the chat summary in the user's language.
+Pass it as `render.py --lang ja|en`. A copy in a second language is rendered
 from the same `findings.json` into a subdirectory with the render command in
 the *Run contract*'s Independence row, then checked with
 `contract_check.py <out> --allow <lang>`. Excerpts show the assessed

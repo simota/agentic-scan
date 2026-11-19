@@ -97,7 +97,7 @@ to a security review of the application's source (IG5):
 | IDs | `F-001`… for agent findings, numbered without gaps in severity order (then path and line; `findings.py renumber` numbers `FalsePositive`/`NotApplicable` last, and `contract_check.py` leaves their order unchecked). Number new findings in merge order while reviewing; once VERIFY has settled severities and verdicts, `scripts/findings.py renumber <out>/findings.json` restores the order and rewrites every reference. `L-*` only from `inventory.py --into`. No other prefixes |
 | Inventory | RECON: `scripts/inventory.py <repo> --out <out>/inventory.json`. End of REVIEW, after the first merge created `findings.json`: `scripts/inventory.py <repo> --out <out>/inventory.json --into <out>/findings.json` once. Never create or edit the scanner fields of `L-*`; record review only as `validation` on the existing ID via `findings.py merge`, after this last `--into` |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
-| Outputs | Exactly `findings.json`, `inventory.json`, `dashboard.html`, `report.html`, `report.pdf`, in the requester's language, rendered after the last merge or `--into`. If `render.py` exits 3, read its message: an engine that failed or timed out gets one retry (raise `PROMPT_SCAN_PDF_TIMEOUT` for a timeout; a sandboxed host may need the browser run outside its sandbox). Only when no engine can produce the PDF, merge the limitation "report.pdf not produced: no PDF engine", re-run `render.py --no-pdf`, then `contract_check.py <out> --no-pdf` |
+| Outputs | Exactly `findings.json`, `inventory.json`, `dashboard.html`, `report.html`, `report.pdf`, in the report language (*Report language* under Outputs), rendered after the last merge or `--into`. If `render.py` exits 3, read its message: an engine that failed or timed out gets one retry (raise `PROMPT_SCAN_PDF_TIMEOUT` for a timeout; a sandboxed host may need the browser run outside its sandbox). Only when no engine can produce the PDF, merge the limitation "report.pdf not produced: no PDF engine", re-run `render.py --no-pdf`, then `contract_check.py <out> --no-pdf` |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Scratch | A new, empty directory for working notes and fragments, outside the reviewed repository and the output directory (Claude Code: the scratchpad directory; elsewhere a fresh directory under `$TMPDIR`). Name its path in the chat summary |
 | Writing the record | Never build `findings.json` with a heredoc, `echo` redirection, `python -c` or a generated script. Write each batch as a JSON fragment with the file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. One to five new findings per fragment; merge each batch before writing the next. The first fragment carries `meta` |
@@ -183,6 +183,15 @@ condenses this table, this paragraph and the confidence table in
 | `dashboard.html` | Interactive, self-contained dashboard: filter by kind, severity, perspective and prompt |
 | `report.html` | The report document, print-styled for A4 (the source of the PDF) |
 | `report.pdf` | Cover, summary, prompt inventory, perspectives, checked and sound, findings with proposals, eval runs, decisions for a human, limitations, next steps |
+
+**Report language.** Write the report in the user's language, chosen in this
+order: (1) a language named in the request or the skill's arguments
+(`lang=ja`, `lang=en`, "in English", "日本語で"); (2) otherwise the language the
+user has set for the agent (a host setting such as Claude Code's `language`,
+or a standing instruction such as "always respond in Japanese"); (3) otherwise
+the language of the request. The renderers produce `ja` and `en`; for any
+other language render `en` and write the chat summary in the user's language.
+Pass it as `render.py --lang` (it defaults to `meta.lang`, else `ja`).
 
 Skip the files when only a checklist was asked for. When asked to send the
 report to the prompt owners, start from `templates/report.<lang>.md`, filled

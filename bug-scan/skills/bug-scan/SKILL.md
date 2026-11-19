@@ -54,9 +54,18 @@ headline numbers.
 | People | No author names, committers or personal e-mail anywhere. `owner` is a team or role a person enters |
 | Reproduction | Steps are derived from code and marked `static`. Inputs are synthetic. Nothing is run; a result from `verify-scan` or the requester is cited by reference |
 | Data | Schema and code only, never a database. SQL in `data_remediation.locate` is a proposal that is not executed; `count` stays `UNKNOWN` unless the requester supplies data |
-| Outputs | Exactly `findings.json`, `surfaces.json`, `history.json`, `dashboard.html`, `report.html`, `report.pdf`, in the requester's language. The ledger lives outside the repository, at a path the requester names. Exports (`export.py`) go to a separate directory the requester names; they are derived and never edited |
+| Outputs | Exactly `findings.json`, `surfaces.json`, `history.json`, `dashboard.html`, `report.html`, `report.pdf`, in the report language (*Report language* below). The ledger lives outside the repository, at a path the requester names. Exports (`export.py`) go to a separate directory the requester names; they are derived and never edited |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)` |
 | Budget | Read fix candidates newest first. Past 100 candidates, sample by module; record `meta.sample` as `{read, candidates}`. Short on effort: close core flows first and name the rest in `limitations` |
+
+**Report language.** Write the report in the user's language, chosen in this
+order: (1) a language named in the request or the skill's arguments
+(`lang=ja`, `lang=en`, "in English", "日本語で"); (2) otherwise the language the
+user has set for the agent (a host setting such as Claude Code's `language`,
+or a standing instruction such as "always respond in Japanese"); (3) otherwise
+the language of the request. The renderers produce `ja` and `en`; for any
+other language render `en` and write the chat summary in the user's language.
+Record it as `meta.lang` (`ja` or `en`); `render.py --lang` overrides it.
 
 | Severity | When |
 |---|---|

@@ -72,7 +72,7 @@ through a missing or bypassable access control belongs to a security review:
 | Granularity | One finding per root cause, i.e. per fix location. The same personal field leaking through one shared logger is one finding that lists every call site in `flow`; a deletion path that misses several stores is one finding naming every missed store; gaps needing different fixes are separate findings. The same gap on two platforms is two findings when each platform's code is fixed separately; cross-reference them in `flow`. `check` refuses two reported findings with the same first `location` |
 | IDs | `PV-001`… numbered without gaps in severity order, then by the path of each finding's first `location` (`scripts/findings.py renumber` applies this and rewrites `PV-NNN` references in prose and lists); `FalsePositive` and `NotApplicable` findings come last, by path. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
-| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`). Write the record's prose in that language; report labels follow `--lang` (`ja` or `en`; for any other language set `meta.lang` and `--lang` to `en`), prose is never machine-translated |
+| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the report language (*Report language* under Outputs). No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Effort | When the effort runs short, close units in risk order (sensitive categories, third-party flows and deletion first) instead of thinning every unit. `limitations` gives the count of unreached units and ledger entries |
 | Scratch | A new, empty directory for working records (data map, ledger, flow rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
@@ -123,8 +123,18 @@ the confidence values (`legend` in `scripts/render.py`); change it with them.
 | `dashboard.html` | Self-contained dashboard: counts, filterable findings, commitments, the personal data map with who receives each element, perspective coverage |
 | `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, data map and recipients, coverage, sound items, limitations, decisions, next steps |
 
-Skip the files when only a checklist was asked for. Render them in the
-requester's language (`--lang ja|en`).
+Skip the files when only a checklist was asked for.
+
+**Report language.** Write the report in the user's language, chosen in this
+order: (1) a language named in the request or the skill's arguments
+(`lang=ja`, `lang=en`, "in English", "日本語で"); (2) otherwise the language the
+user has set for the agent (a host setting such as Claude Code's `language`,
+or a standing instruction such as "always respond in Japanese"); (3) otherwise
+the language of the request. The renderers produce `ja` and `en`; for any
+other language render `en` and write the chat summary in the user's language.
+Write the record's prose in that language; report labels follow `--lang` (`ja`
+or `en`; for any other language set `meta.lang` and `--lang` to `en`), and
+prose is never machine-translated.
 
 ## Decide first
 

@@ -75,12 +75,22 @@ entry, not reviewed):
 | Granularity | One finding per root cause, i.e. per fix location (a module, a policy document, a shared security group). The same flaw instantiated in several environments is one finding listing every resource address |
 | IDs | `F-001`… for findings from review, numbered without gaps in severity order (then path); `I-*` only from `iac_scan.py`; attack paths `AP-01`…; use at least three digits for finding IDs and two for attack paths; compare ID numbers numerically, including beyond `999` / `99` |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
-| Outputs | Exactly `findings.json`, `iac.json`, `dashboard.html`, `assessment.html`, `assessment.pdf`, in the requester's language. Extra files only on request (`contract_check.py --allow NAME`) |
+| Outputs | Exactly `findings.json`, `iac.json`, `dashboard.html`, `assessment.html`, `assessment.pdf`, in the report language (*Report language* below). Extra files only on request (`contract_check.py --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)` |
 | Budget | When the budget runs short, close units in risk order (production, internet-reachable paths and crown jewels first). `limitations` names the units, resources and attack paths not reached |
 | Scratch | A new, empty directory outside both the repository and the output directory (Claude Code: the scratchpad directory). Name it in the chat summary |
 | Writing the record | Never build `findings.json` with a heredoc, `echo` redirection, `python -c` or a generated script. Write each batch of one to five review findings as a JSON fragment with the file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. A finding and an attack path that list each other go in the same `merge` call (or add the link in a later fragment): a link to a record not yet merged is refused. `I-*` verdicts may go in one fragment together; `scripts/findings.py status <out>/findings.json` lists what is still `Unverified` or names a missing ID. Use provisional `F-*` IDs while writing (three digits or more, e.g. `F-901`) and run `findings.py renumber` once, after the last merge |
 | Read-only | Write nothing inside the assessed repository. Never copy a state file, a `.tfvars` with secrets or a snapshot containing secret values into the output directory |
+
+**Report language.** Write the report in the user's language, chosen in this
+order: (1) a language named in the request or the skill's arguments
+(`lang=ja`, `lang=en`, "in English", "日本語で"); (2) otherwise the language the
+user has set for the agent (a host setting such as Claude Code's `language`,
+or a standing instruction such as "always respond in Japanese"); (3) otherwise
+the language of the request. The renderers produce `ja` and `en`; for any
+other language render `en` and write the chat summary in the user's language.
+Pass it as `--lang ja|en` to `render.py`, `issues.py`, `sarif.py` and
+`compare.py`.
 
 | Severity | When |
 |---|---|

@@ -70,7 +70,7 @@ Phases: `RECON → UNITS → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Granularity | One finding per removal decision at one fix location. A flag is one finding at its definition, listing its branches in `occurrences`; three unused packages in one manifest are one finding; an unused feature is one finding at its entry point that lists its module, screen and tests |
 | IDs | `P-001`… numbered without gaps in severity order, then path and line; `FalsePositive`/`NotApplicable` come last in their previous id order. `findings.py merge` requires the three-digit form and accepts temporary gaps and findings in any order: number new findings in merge order, then once VERIFY has settled severities and verdicts, `scripts/findings.py renumber <out>/findings.json` restores the order and rewrites every `P-*` reference, including references next to Japanese prose, while preserving review metadata, source identities and external citations. `check`, rendering and the final contract require the restored order. A finding is never deleted; rule one out with `FalsePositive`/`NotApplicable` |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
-| Outputs | Exactly `findings.json`, `units.json`, `inventory.json`, `dashboard.html`, `report.html`, `report.pdf`, in the requester's language, rendered after the last merge. `render.py --lang` takes `ja` or `en`; for any other language, write the record's prose (summary, titles, basis, subtraction, risk, notes) in the requester's language, render with `--lang en` labels, and say so in `limitations`. If `render.py` exits 3, read its message: it covers no engine found, an engine that failed, and a timeout. On a failure or timeout, retry once with a higher `PRUNE_SCAN_PDF_TIMEOUT` (seconds), outside the host's sandbox if the browser cannot start inside it. Only when no engine can produce the PDF, merge the limitation "report.pdf not produced: <reason from the message>", rerun `render.py --no-pdf`, then `contract_check.py <out> --no-pdf` |
+| Outputs | Exactly `findings.json`, `units.json`, `inventory.json`, `dashboard.html`, `report.html`, `report.pdf`, in the report language (*Report language* under Outputs), rendered after the last merge. `render.py --lang` takes `ja` or `en`; for any other language, write the record's prose (summary, titles, basis, subtraction, risk, notes) in the user's language, render with `--lang en` labels, and say so in `limitations`. If `render.py` exits 3, read its message: it covers no engine found, an engine that failed, and a timeout. On a failure or timeout, retry once with a higher `PRUNE_SCAN_PDF_TIMEOUT` (seconds), outside the host's sandbox if the browser cannot start inside it. Only when no engine can produce the PDF, merge the limitation "report.pdf not produced: <reason from the message>", rerun `render.py --no-pdf`, then `contract_check.py <out> --no-pdf` |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)` |
 | Budget | When short, close units in liability order (units with public or partner entry points first, then the rest, then `shared`). `limitations` names every unit or perspective not reached |
 | Scratch | A new, empty directory outside both the repository and the output directory (Claude Code: the scratchpad directory). Name its path in the chat summary |
@@ -106,7 +106,7 @@ in `scripts/render.py`) condenses this table and the confidence table in
 | CHECKLIST | The perspective families that apply to these units, as a coverage plan; attach inventory candidates marked unverified | `reference/perspectives.md` |
 | REVIEW | One pass per unit. From each entry point inward: who calls it, what it reaches, what the core jobs would lose without it. Sweep every applicable hunt step; decide each inventory candidate in context; write the subtraction for each finding | `reference/perspectives.md` |
 | VERIFY | For every finding, hunt for dynamic and external use (reflection, string-built names, DI and plugin registration, routes from config, templates, serialization, cron and infrastructure outside the repo, external API consumers, other repos, old mobile versions, data retention and legal duties); with access logs the requester supplied, count the traffic per route and public asset (`scripts/usage.py`); try to falsify it; settle the verdict and the confidence | `reference/validation.md`, `reference/usage.md` |
-| REPORT | Merge findings with `path:line` locations, `unit_ref`, `basis`, `subtraction` and `risk`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py --lang <ja\|en> --repo <repo>` in the requester's language; pass `scripts/contract_check.py`; then give the chat summary (*Done when*) | `reference/findings-schema.md`, `reference/report.md` |
+| REPORT | Merge findings with `path:line` locations, `unit_ref`, `basis`, `subtraction` and `risk`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py --lang <ja\|en> --repo <repo>` in the report language; pass `scripts/contract_check.py`; then give the chat summary (*Done when*) | `reference/findings-schema.md`, `reference/report.md` |
 
 ## Outputs
 
@@ -118,6 +118,14 @@ in `scripts/render.py`) condenses this table and the confidence table in
 | `inventory.json` | `inventory.py` candidates (symbols, orphan files, dependencies, env vars, flags, locale keys, assets, CSS, routes, scripts, skipped tests, commented code, caveat comments, markers, schema) |
 | `dashboard.html` | Interactive, self-contained dashboard (the bundled report kit) |
 | `report.html` / `report.pdf` | The formal report: summary, priority, coverage, register, findings; next steps open with the subtraction summary |
+
+**Report language.** Write the report in the user's language, chosen in this
+order: (1) a language named in the request or the skill's arguments
+(`lang=ja`, `lang=en`, "in English", "日本語で"); (2) otherwise the language the
+user has set for the agent (a host setting such as Claude Code's `language`,
+or a standing instruction such as "always respond in Japanese"); (3) otherwise
+the language of the request. The renderers produce `ja` and `en`; for any
+other language render `en` and write the chat summary in the user's language.
 
 Skip the files when only a checklist was asked for. A removal plan
 (`scripts/plan.py`), usage counts (`scripts/usage.py`) and a SARIF export (`scripts/sarif.py`) are not contracted

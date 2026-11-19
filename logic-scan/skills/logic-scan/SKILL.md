@@ -78,7 +78,7 @@ Neighbours, and where their questions go instead (all out of scope here):
 | Granularity | One finding per remedy, i.e. per change that can be planned and reviewed on its own. The same wrong rounding copied into five callers of one helper is one finding listing them in `trace`; a rule that must have one source before its rounding can be fixed is two findings linked by `depends_on` |
 | IDs | `F-001`… numbered without gaps in severity order (then path), excluded verdicts last. `scripts/findings.py renumber` restores the order and rewrites ID mentions, including `depends_on` and `plan`. After it, use only the new IDs it prints |
 | Severity | The table below, decided before change and confidence; neither raises or lowers it, except that a High finding must be `Confirmed` (below the confidence table) |
-| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
+| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the report language (*Report language* under Outputs). No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Effort | When the effort runs short, close units in core-flow order instead of thinning every unit. `limitations` gives the count of unreached units and ledger entries |
 | Scratch | A new, empty directory for working records (core-flow and rule table, oracle list, ledger, trace rows, counterexample notes, fragments), outside both the audited repository and the output directory: a new directory under the host's session scratch when it names one, otherwise under `$TMPDIR`. Name its path in the chat summary |
@@ -166,9 +166,17 @@ symlink, either path reaches the same files), not the audited repository.
 | `dashboard.html` | Self-contained dashboard in the application shell of the stylesheet in `scripts/report_assets/dashboard.css` (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings with their counterexamples, logic rule ledger, perspective coverage, how to read the levels |
 | `report.md` | The written assessment: verdict counts, then scope and method, how to read the levels, findings, plan, logic rule ledger, perspective coverage, checked and found sound, what could not be checked, decisions for a human, next steps |
 
-Skip the files when only a checklist was asked for. Set `meta.lang` to the
-requester's language (`ja` or `en`; for any other language, `en`, with the
-chat summary in the requester's language).
+Skip the files when only a checklist was asked for.
+
+**Report language.** Write the report in the user's language, chosen in this
+order: (1) a language named in the request or the skill's arguments
+(`lang=ja`, `lang=en`, "in English", "日本語で"); (2) otherwise the language the
+user has set for the agent (a host setting such as Claude Code's `language`,
+or a standing instruction such as "always respond in Japanese"); (3) otherwise
+the language of the request. The renderers produce `ja` and `en`; for any
+other language render `en` and write the chat summary in the user's language.
+Set `meta.lang` to that language (`ja` or `en`); render uses it, and `check`
+requires it.
 
 ## Decide first
 

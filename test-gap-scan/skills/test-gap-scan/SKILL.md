@@ -69,7 +69,7 @@ Neighbours, and where their questions go instead:
 | Granularity | One finding per remedy, i.e. per change to the tests that can be planned and reviewed on its own. Ten tests asserting only a status code in one file are one finding listing them in `trace`; a gap that needs a seam and then a behaviour test is two findings linked by `depends_on` when the seam serves other findings too |
 | IDs | `F-001`… numbered without gaps in severity order (then path), excluded verdicts last. `scripts/findings.py renumber` restores the order and rewrites ID mentions, including `depends_on` and `plan`. After it, use only the new IDs it prints |
 | Severity | The table below, decided before testability and confidence; neither raises or lowers it |
-| Outputs | `findings.json`, `dashboard.html`, `assessment.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
+| Outputs | `findings.json`, `dashboard.html`, `assessment.html`, `report.md`, in the report language (*Report language* under Outputs). No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Effort | When the effort runs short, close units in critical-flow order instead of thinning every unit. `limitations` gives the count of unreached units and ledger entries |
 | Scratch | A new, empty directory for working records (critical-flow list, hotspot table, test map, ledger, trace rows, fragments), outside both the audited repository and the output directory: a new directory under the host's session scratch when it names one, otherwise under `$TMPDIR`. Name its path in the chat summary |
@@ -142,9 +142,17 @@ skill's directory, not the audited repository.
 | `assessment.html` | Printable HTML with the same triage lanes and detailed findings. Open it in a browser and print to PDF. |
 | `report.md` | The written assessment: verdict counts, then scope and method, how to read the levels, findings, plan, idiom ledger, perspective coverage, checked and adequately tested, what could not be checked, decisions for a human, next steps |
 
-Skip the files when only a checklist was asked for. Set `meta.lang` to the
-requester's language (`ja` or `en`; for any other language, `en`, with the
-chat summary in the requester's language).
+Skip the files when only a checklist was asked for.
+
+**Report language.** Write the report in the user's language, chosen in this
+order: (1) a language named in the request or the skill's arguments
+(`lang=ja`, `lang=en`, "in English", "日本語で"); (2) otherwise the language the
+user has set for the agent (a host setting such as Claude Code's `language`,
+or a standing instruction such as "always respond in Japanese"); (3) otherwise
+the language of the request. The renderers produce `ja` and `en`; for any
+other language render `en` and write the chat summary in the user's language.
+Set `meta.lang` to that language (`ja` or `en`); render uses it, and `check`
+requires it.
 
 ## Decide first
 

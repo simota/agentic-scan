@@ -87,7 +87,7 @@ repository: call the scripts by that path, never a `scripts/` of the audited pro
 | Granularity | One finding per root cause, i.e. per fix location. The same N+1 helper used by several endpoints is one finding that lists them in `request`; problems needing different fixes are separate findings |
 | IDs | `P-001`… numbered without gaps in severity order (ties in any stable order, e.g. by first location), with `FalsePositive` and `NotApplicable` findings after all others. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
-| Outputs | `findings.json`, `dashboard.html`, `assessment.html`, `report.md`, in the requester's language (`meta.lang` and `--lang` are `ja` or `en` and change the labels and the display names of statuses and methods; finding text stays in the language it was written in, so for any other language use `en` labels and write the text in the requester's language). No extra files unless asked (`findings.py check --allow NAME`) |
+| Outputs | `findings.json`, `dashboard.html`, `assessment.html`, `report.md`, in the report language (*Report language* under Outputs). No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Budget (effort) | When the effort runs short, close units in impact order (highest-frequency workloads and uncapped scale drivers first) instead of thinning every unit. `limitations` gives the count of unreached units, entry points and ledger entries |
 | Scratch | A new, empty directory for working records (recon map, ledger, cost-trace rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
@@ -155,6 +155,18 @@ High; duplicated side effects from user retries go to `decisions`.
 | `report.md` | Counts, scope and method, a findings index, one block per finding, excluded findings, budgets with the findings citing them, perspective coverage, sound items, limitations, decisions, next steps |
 
 Skip the files when only a checklist was asked for.
+
+**Report language.** Write the report in the user's language, chosen in this
+order: (1) a language named in the request or the skill's arguments
+(`lang=ja`, `lang=en`, "in English", "日本語で"); (2) otherwise the language the
+user has set for the agent (a host setting such as Claude Code's `language`,
+or a standing instruction such as "always respond in Japanese"); (3) otherwise
+the language of the request. The renderers produce `ja` and `en`; for any
+other language render `en` and write the chat summary in the user's language.
+`meta.lang` and `--lang` are `ja` or `en` and change the labels and the
+display names of statuses and methods; finding text stays in the language it
+was written in, so for any other language use `en` labels and write the text
+in the user's language.
 
 ## Decide first
 

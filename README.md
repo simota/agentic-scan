@@ -23,6 +23,28 @@ dashboard and a report. None of them edits the code under review.
 
 Each skill's own README describes its workflow and outputs.
 
+## Language
+
+The documentation is in English. Reports follow the user's language, chosen
+in this order:
+
+1. A language named when invoking the skill, as an argument or in the
+   request: `lang=ja`, `lang=en`, "in English", "日本語で".
+2. Otherwise, the language the user has set for the agent: a host setting
+   such as Claude Code's `language`, or a standing instruction such as
+   "always respond in Japanese".
+3. Otherwise, the language of the request.
+
+```text
+/security-scan lang=en          # English report, whatever the agent's language
+/ux-scan lang=ja                # Japanese report
+```
+
+The dashboards and reports are rendered in Japanese (`ja`) or English (`en`).
+For any other language the report is rendered in English and the agent's
+summary in chat uses the user's language. Each renderer also takes the
+language directly: `scripts/render.py ... --lang ja|en`.
+
 ## Layout
 
 ```

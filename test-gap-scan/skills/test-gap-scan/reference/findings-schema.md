@@ -21,14 +21,15 @@ python3 scripts/findings.py check <out> --repo <checkout> [--allow NAME]
 `scripts/report_assets/dashboard.css`: counts, a priority queue, the plan as
 ordered batches, a findings register filterable by severity, testability, effort,
 confidence, perspective, status, verdict and text, the test idiom ledger,
-perspective coverage, a copy-for-LLM button per finding) and `<out>/report.md`.
+perspective coverage, a copy-for-LLM button per finding), `<out>/assessment.html`
+(printable triage report) and `<out>/report.md`.
 It refuses an `<out>` or an output file that is a symlink: a write follows the
 link, so a planted one would land outside the run.
 Recorded text is shown as written: locations and commands stay literal, and
 prose keeps only `*emphasis*` and code spans, never Markdown blocks, links or
 `_` emphasis (`__init__` stays `__init__`); bidirectional controls are shown
 visibly. The record must be a regular file (render reads it twice, once
-under the lock). Both files are staged, then each replaces its old one
+under the lock). All report files are staged, then each replaces its old one
 atomically. `render.py` exits `0` when written, `1` when an output or its
 closing line on stdout could not be written and `2` when the record does not
 read or match the schema, or the command line is wrong.
@@ -224,6 +225,7 @@ absent on excluded findings; every open, non-excluded Medium-or-higher finding
 in exactly one plan batch, each open dependency of a planned finding in an
 earlier batch or listed before it in its own, a `Restructure` finding alone in
 its batch, and no excluded finding in a batch; and `dashboard.html` and
-`report.md` byte-identical to a fresh render in `meta.lang`. With `--repo`,
+`report.md` byte-identical to a fresh render in `meta.lang`. When present,
+`assessment.html` is also checked against a fresh render. With `--repo`,
 every `location` and `coverage.tests` entry exists in the checkout. It checks
 shape and consistency, not whether a finding is true.

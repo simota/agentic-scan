@@ -12,15 +12,15 @@ python3 scripts/findings.py check <out> [--allow NAME]
 ```
 
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
-filterable) and `<out>/report.md`. Exit codes: `0` written; `1` an output could
-not be encoded or written (unencodable text in the record, or a destination
+filterable), `<out>/assessment.html` (printable triage report) and
+`<out>/report.md`. Exit codes: `0` written; `1` an output could not be encoded or written (unencodable text in the record, or a destination
 problem: the destination directory must be writable); `2` the input or command
 line is wrong (the message names the file and, for shape errors, the field).
 `findings.py` exits `1` when a merge is refused or `check` finds violations (one
 per line on stderr; a path that is not a directory is reported as such) and `2`
-on a usage error. `check` requires the three outputs to be readable, nonempty
-regular files (symbolic links to such files are fine) and validates structure,
-not whether rendered text is current or a finding is true.
+on a usage error. `check` requires `findings.json`, `dashboard.html` and `report.md` to be readable, nonempty
+regular files (symbolic links to such files are fine). It checks that
+`assessment.html` is readable and nonempty when present, and validates record structure.
 
 Inputs are strict UTF-8 JSON in regular files (symbolic links to them are
 fine): unique member names at every level, no `NaN`/`Infinity`, no number

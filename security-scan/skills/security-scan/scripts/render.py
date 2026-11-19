@@ -1005,6 +1005,165 @@ LABELS["ja"].update(
     review_overdue="見直し期限を過ぎています", triage_history="以前の判断",
     triage_note="対応についての判断の記録です。検証判定や検証の根拠は変更しません。")
 
+# console-triage layer (report_assets/console.css, console.js). Lane names follow
+# action_kind(); CLOSED and EXCLUDED hold the records the queue leaves out.
+LABELS["en"].update(
+    cx_assessment_link="Printable report",
+    cx_readout="Record status", cx_readout_open="open", cx_readout_closed="closed", cx_readout_excluded="excluded",
+    cx_severity_h="Severity", cx_severity_note="{n} included records; {x} excluded are not counted",
+    cx_tile_sub="open {open} · closed {closed}", cx_legend_cell="1 cell = 1 record.",
+    cx_legend_open="open", cx_legend_closed="fixed or accepted",
+    cx_verdict_h="Verdict", cx_verdict_note="all {n} records; excluded verdicts kept as their own block",
+    cx_perspective_h="Perspectives", cx_perspective_note="{n} perspectives",
+    cx_perspectives_empty="No perspectives recorded.",
+    cx_board_h="Triage", cx_board_note="every record in one lane; pick a card to inspect it",
+    cx_lane_empty="None", cx_inspector_h="Inspector", cx_inspector_empty="No records to inspect.",
+    cx_copy="Copy for Issue / LLM", cx_open_record="Open in register",
+    cx_where_h="Where", cx_evidence_h="Evidence", cx_evidence_method="method: {method}", cx_fix_h="Fix direction",
+    cx_empty_records="No records.", cx_read_only="read-only",
+    cx_lane_fix_now="FIX NOW", cx_lane_verify_first="VERIFY FIRST", cx_lane_closed="CLOSED", cx_lane_excluded="EXCLUDED",
+    cx_lane_note_fix_now="Open; Valid, Confirmed, with sufficient structured verification.",
+    cx_lane_note_verify_first="Open; reachability, preconditions or evidence still to confirm.",
+    cx_lane_note_closed="Fix recorded or risk accepted.",
+    cx_lane_note_excluded="False positive or not applicable; kept with the justification.")
+LABELS["ja"].update(
+    cx_assessment_link="印刷用レポート",
+    cx_readout="対応状況", cx_readout_open="open", cx_readout_closed="closed", cx_readout_excluded="excluded",
+    cx_severity_h="Severity", cx_severity_note="集計対象 {n} 件（除外 {x} 件は数えない）",
+    cx_tile_sub="未解決 {open} · 対応済 {closed}", cx_legend_cell="1 マス = 1 件。",
+    cx_legend_open="未解決", cx_legend_closed="対応済み（Fixed / Accepted）",
+    cx_verdict_h="Verdict", cx_verdict_note="記録 {n} 件の判定。除外の判定は独立した区画",
+    cx_perspective_h="Perspectives", cx_perspective_note="観点 {n}",
+    cx_perspectives_empty="観点の記録がありません。",
+    cx_board_h="Triage", cx_board_note="全件をいずれかのレーンに置いています。カードを選ぶと詳細を表示します",
+    cx_lane_empty="該当なし", cx_inspector_h="Inspector", cx_inspector_empty="表示できる記録がありません。",
+    cx_copy="Issue / LLM 用にコピー", cx_open_record="一覧で開く",
+    cx_where_h="該当箇所", cx_evidence_h="根拠", cx_evidence_method="method: {method}", cx_fix_h="修正方針",
+    cx_empty_records="記録がありません。", cx_read_only="read-only",
+    cx_lane_fix_now="FIX NOW / 修正計画", cx_lane_verify_first="VERIFY FIRST / 先に検証",
+    cx_lane_closed="CLOSED / 対応済・受容", cx_lane_excluded="EXCLUDED / 誤検知・除外",
+    cx_lane_note_fix_now="未対応で、Valid・Confirmed かつ構造化された検証根拠がそろった指摘",
+    cx_lane_note_verify_first="未対応で、到達経路・成立条件・根拠の確認が残る指摘",
+    cx_lane_note_closed="修正の申告（Fixed）または受容（Accepted）",
+    cx_lane_note_excluded="誤検知・対象外として根拠つきで保持")
+
+LANES = ("fix_now", "verify_first", "closed", "excluded")
+LANE_TONES = {"fix_now": "high", "verify_first": "medium", "closed": "low", "excluded": "accent"}
+VERDICT_TONES = {"Valid": "strong", "Likely": "mid", "Unverified": "hatch", "Unlikely": "weak"}
+SEVERITY_TONES = {"High": "high", "Medium": "medium", "Low": "low", "Info": "info"}
+
+
+def console_lane(finding, actions):
+    """The lane of one record: excluded verdicts, then closed statuses, then action_kind() via the queue."""
+    if finding["verdict"] in EXCLUDED:
+        return "excluded"
+    if finding["status"] != "Open":
+        return "closed"
+    return actions[str(finding["id"])]
+
+
+def console_model(data, model, L):
+    """The normalized console model (artifacts/report-style/console/INTEGRATION.md) for both outputs."""
+    actions = {str(item["finding"]["id"]): item["action"] for item in model["queue"]}
+    m = data["meta"]
+    findings, lanes = [], {}
+    for f in data["findings"]:
+        lane = console_lane(f, actions)
+        lanes[str(f["id"])] = lane
+        excluded = lane == "excluded"
+        validation = f.get("validation") or {}
+        notes = [L["excluded_note"]] if excluded else []
+        previous = f.get("previous_validation")
+        if isinstance(previous, dict) and isinstance(previous.get("verdict"), str):
+            notes.append(L["previous_validation"] + ": " + previous["verdict"])
+        guidance = ""
+        if lane in ("fix_now", "verify_first"):
+            guidance = (L["verify_review_note"] if lane == "verify_first"
+                        and review_only_gap(f, model["verification"][f["id"]]) else L[lane + "_note"])
+        findings.append({
+            "id": str(f["id"]), "severity": f["severity"], "status": f["status"],
+            "status_label": L["excluded_short"] if excluded else f["status"],
+            "verdict": f["verdict"], "title": f["title"], "location": f["location"], "lane": lane,
+            "open": lane in ("fix_now", "verify_first"), "excluded": excluded,
+            "anchor": finding_anchor(data, f),
+            "tags": [L["part_short_" + finding_part(f)], f["confidence"]],
+            "where": [{"label": L[key], "value": f.get(key) or "", **({"mono": True} if key in mono else {})}
+                      for key, mono in (("location", {"location"}), ("request", {"request"}), ("actor", ()),
+                                        ("category", ()), ("cwe", {"cwe"}), ("impact", ()))],
+            "evidence": {"text": validation.get("evidence") or "", "method": validation.get("method") or "",
+                         "notes": notes},
+            "fix": f.get("fix") or "",
+            "guidance": guidance,
+        })
+    by_category = {}
+    for f in data["findings"]:
+        by_category.setdefault(f["category"], []).append(f)
+    perspectives = []
+    for p in data["perspectives"]:
+        matched = by_category.get(p.get("name"), [])
+        opened = [f for f in matched if lanes[str(f["id"])] in ("fix_now", "verify_first")]
+        if opened:
+            tone = SEVERITY_TONES[min((f["severity"] for f in opened), key=SEVERITIES.index)]
+        elif any(lanes[str(f["id"])] == "closed" for f in matched):
+            tone = "ink"
+        else:
+            tone = "accent" if matched else "muted"
+        perspectives.append({**{k: p[k] for k in ("name", "result", "note") if k in p}, "tone": tone, "on": bool(opened)})
+    labels = {key[3:]: value for key, value in L.items() if key.startswith("cx_")}
+    labels.update(copied=L["copied"], copy_failed=L["copy_failed"], fix_missing=L["missing_fix"],
+                  evidence_missing=L["missing_evidence"], not_recorded=L["not_recorded"], location=L["location"])
+    return {
+        "meta": {"skill": "security-scan", "title": m["project"], "title_id": "cx-title",
+                 "context": [m.get("date", ""), m.get("commit", ""), m.get("scope", ""), L["cx_read_only"]],
+                 "headline": unverified_headline(model, L)},
+        "counts": {"open": model["open_count"], "closed": model["fixed"] + model["accepted"],
+                   "excluded": model["excluded"], "total": len(data["findings"])},
+        "severities": list(SEVERITIES),
+        "verdicts": [{"key": v, "label": v, "excluded": v in EXCLUDED, **({"tone": VERDICT_TONES[v]} if v in VERDICT_TONES else {})}
+                     for v in VERDICTS],
+        "lanes": [{"key": key, "label": L["cx_lane_" + key], "note": L["cx_lane_note_" + key], "tone": LANE_TONES[key]}
+                  for key in LANES],
+        "perspectives": perspectives,
+        "findings": findings,
+        "labels": labels,
+    }
+
+
+def console_band_html(cm, kind=""):
+    """Static band header (assessment): wordmark, skill, title, context and the open / closed / excluded readout."""
+    meta, counts, L = cm["meta"], cm["counts"], cm["labels"]
+    context = "".join(f"<span>{esc(part)}</span>" for part in meta["context"] if part)
+    readout = "".join(f"<div><dt>{esc(L['readout_' + key])}</dt><dd>{counts[key]}</dd></div>"
+                      for key in ("open", "closed", "excluded"))
+    return (f"<header class='cx-band'><div class='cx-band-in'><div>"
+            f"<p class='cx-wm'><span><span class='cx-perm' aria-hidden='true'>r--</span> agentic-scan</span>"
+            f"<span class='cx-skill'>{esc(meta['skill'])}</span></p>"
+            + (f"<p class='cx-kind'>{esc(kind)}</p>" if kind else "") +
+            f"<h1>{esc(meta['title'])}</h1>" + (f"<p class='cx-ctx'>{context}</p>" if context else "") +
+            f"</div><dl class='cx-readout' aria-label='{esc(L['readout'])}' data-cx-readout>{readout}</dl></div></header>")
+
+
+def console_tiles_html(cm):
+    """Static severity tiles: one cell per included record, filled while it is open."""
+    L, included = cm["labels"], [f for f in cm["findings"] if not f["excluded"]]
+    tiles = []
+    for sev in cm["severities"]:
+        items = [f for f in included if f["severity"] == sev]
+        opened = [f for f in items if f["open"]]
+        cells = "".join("<i class='cx-on'></i>" for _ in opened[:120]) + "<i></i>" * max(0, min(len(items), 120) - len(opened))
+        if len(items) > 120:
+            cells += f"<span class='cx-more'>+{len(items) - 120}</span>"
+        ids = " ".join(f["id"] for f in opened[:6]) + (" …" if len(opened) > 6 else "")
+        sub = L["tile_sub"].format(open=len(opened), closed=len(items) - len(opened)) + (f" · {ids}" if ids else "")
+        tiles.append(f"<div class='cx-tile cx-c-{SEVERITY_TONES[sev]}' data-severity='{esc(sev)}'>"
+                     f"<span class='cx-l'>{esc(sev)}</span><span class='cx-n'>{len(items)}</span>"
+                     f"<span class='cx-cells' aria-hidden='true'>{cells}</span><span class='cx-s'>{esc(sub)}</span></div>")
+    note = L["severity_note"].format(n=len(included), x=len(cm["findings"]) - len(included))
+    return (f"<section class='cx-sev' aria-labelledby='cx-sev-h'><h2 class='cx-ph' id='cx-sev-h'><b>{esc(L['severity_h'])}</b>"
+            f"<span>{esc(note)}</span></h2><div class='cx-tiles'>{''.join(tiles)}</div>"
+            f"<p class='cx-legend'>{esc(L['legend_cell'])}<i class='cx-on'></i>{esc(L['legend_open'])} "
+            f"<i></i>{esc(L['legend_closed'])}</p></section>")
+
 
 ASSESSMENT_LABELS = {
     "en": {
@@ -1035,7 +1194,7 @@ ASSESSMENT_LABELS = {
         "a_cap_queue": "Open findings in order of severity and readiness to fix; the full entry for each follows in the finding details.",
         "a_cap_coverage": "Review perspectives with the recorded result and note for each.",
         "a_cap_index": "All non-excluded findings with their recorded state and evidence basis.",
-        "a_queue_note": "Open, non-excluded findings only. Ordered by severity, then ready-to-fix findings before findings needing verification, then ID. Planning a fix requires Valid, Confirmed and sufficient structured verification; legacy or incomplete evidence requires verification first.",
+        "a_queue_note": "Every record sits in one of four lanes, top to bottom: FIX NOW and VERIFY FIRST hold the open, non-excluded findings (each ordered by severity, then ID); CLOSED and EXCLUDED list the rest for reference. Planning a fix requires Valid, Confirmed and sufficient structured verification; legacy or incomplete evidence requires verification first.",
         "a_queue_empty": "No open, non-excluded findings are recorded. Review the coverage and limitations before drawing conclusions.",
         "a_finding": "Finding",
         "a_next_action": "Next action",
@@ -1080,7 +1239,7 @@ ASSESSMENT_LABELS = {
         "a_cap_queue": "重大度と修正準備の順に並べた未解決指摘。各指摘の全文は指摘の詳細に続きます。",
         "a_cap_coverage": "診断観点ごとの記録された結果と注記。",
         "a_cap_index": "除外を除くすべての指摘と、記録された状態および根拠。",
-        "a_queue_note": "未対応かつ除外されていない指摘のみを掲載しています。重大度、修正に進めるか検証が必要か、ID の順に並べています。修正に進む対象は Valid・Confirmed に加え構造化された検証根拠がそろった指摘です。従来形式や根拠不足の指摘は先に検証が必要です。",
+        "a_queue_note": "全件を 4 つのレーンに上から順に置いています。FIX NOW と VERIFY FIRST は未対応かつ除外されていない指摘で、それぞれ重大度、ID の順です。CLOSED と EXCLUDED は残りの記録を参照用に並べています。修正に進む対象は Valid・Confirmed に加え構造化された検証根拠がそろった指摘です。従来形式や根拠不足の指摘は先に検証が必要です。",
         "a_queue_empty": "未対応かつ除外されていない指摘は記録されていません。結論を出す前に、診断範囲と制約を確認してください。",
         "a_finding": "指摘事項",
         "a_next_action": "次の対応",
@@ -1901,12 +2060,36 @@ def render_assessment_html(data, L, lang, integrity=None):
 
     verify_legend = (f"<p class='queue-legend'><strong>{esc(L['a_verify_first'])}</strong> {esc(L['a_verify_action'])}</p>"
                      if any(item["action"] != "fix_now" for item in model["queue"]) else "")
-    part_queues = {part: [item for item in model["queue"] if item["finding"]["part"] == part] for part in PARTS}
-    queue_html = ("".join(
-        f"<h3 id='priority-queue-{part}'>{esc(L['part_' + part])}</h3>" +
-        (queue_table(part_queues[part]) if part_queues[part] else f"<p class='small'>{esc(L['part_none_open'])}</p>")
-        for part in PARTS)
-        if model["queue"] else f"<p>{esc(L['a_queue_empty'])}</p>")
+    # The same four lanes as the dashboard board, top to bottom. FIX NOW and
+    # VERIFY FIRST are the open queue; CLOSED and EXCLUDED follow it.
+    cm = console_model(data, model, L)
+    lane_meta = {lane["key"]: lane for lane in cm["lanes"]}
+
+    def lane_open(n, label_key, body):
+        lane = lane_meta[label_key]
+        return (f"<div class='cx-doc-lane cx-c-{lane['tone']}' id='lane-{label_key}' data-lane='{label_key}'>"
+                f"<h3><span>{n}. {esc(lane['label'])}</span><span class='cx-count'>{body[0]}</span></h3>"
+                f"<p class='cx-lane-note small'>{esc(lane['note'])}</p>{body[1]}</div>")
+
+    def queue_lane(n, action):
+        items = [item for item in model["queue"] if item["action"] == action]
+        parts = "".join(
+            f"<h4 id='priority-queue-{action}-{part}'>{esc(L['part_' + part])}</h4>" + queue_table(part_items)
+            for part in PARTS for part_items in [[item for item in items if item["finding"]["part"] == part]] if part_items)
+        return lane_open(n, action, (len(items), parts or f"<p class='small'>{esc(L['cx_lane_empty'])}</p>"))
+
+    def record_lane(n, key):
+        records = [(f, c) for f, c in zip(data["findings"], cm["findings"]) if c["lane"] == key]
+        rows = "".join(
+            f"<li><span><a href='#{esc(c['anchor'])}'>{esc(c['id'])}</a><br>{badge(f)}</span>"
+            f"<span>{esc(f['title'])}<span class='cx-loc'>{esc(f['location'])}</span></span>"
+            f"<span class='cx-state'>{esc(c['status_label'])} · {esc(f['verdict'])}</span></li>" for f, c in records)
+        return lane_open(n, key, (len(records), f"<ul class='cx-doc-list'>{rows}</ul>" if rows
+                                  else f"<p class='small'>{esc(L['cx_lane_empty'])}</p>"))
+
+    queue_html = (queue_lane(1, "fix_now") + queue_lane(2, "verify_first")
+                  if model["queue"] else f"<p>{esc(L['a_queue_empty'])}</p>")
+    closed_lanes_html = (f"<div id='closed-lanes'>{record_lane(3, 'closed')}{record_lane(4, 'excluded')}</div>")
 
     lens = data.get("perspectives", [])
     lens_rows = "".join(
@@ -1999,12 +2182,13 @@ def render_assessment_html(data, L, lang, integrity=None):
                      "".join(card(f, True) for f in excluded) + "</section>" if excluded else "")
 
     # The running footer is CSS text, not a label: localize it explicitly.
-    assessment_css = report_style.document_css(L["a_running_footer"]) + ASSESSMENT_CSS
+    assessment_css = report_style.document_css(L["a_running_footer"]) + ASSESSMENT_CSS + report_style.console_css()
     return f"""<!doctype html>
-<html lang="{esc(lang)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<html lang="{esc(lang)}" class="cx-doc"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(L['title'])} - {esc(m['project'])}</title><style>{assessment_css}</style></head><body>
-<header class="report-header"><p class="kicker">{esc(L['a_kicker'])}</p><h1>{esc(L['title'])}</h1>
-<p class="project">{esc(m['project'])}</p>{meta_top}{scope_lines}</header>
+{console_band_html(cm, L['title'])}
+<header class="report-header"><p class="kicker">{esc(L['a_kicker'])}</p>{meta_top}{scope_lines}</header>
+{console_tiles_html(cm)}
 <main>
 <section class="summary-section" id="executive-summary"><h2>{esc(L['summary'])}</h2>
 <p class="lead">{esc(summary)}</p>{metrics_html}<p class="small">{esc(accounting)}</p>
@@ -2016,7 +2200,8 @@ def render_assessment_html(data, L, lang, integrity=None):
 <h3 class="limit-heading">{esc(L['a_limits'])}</h3><p class="small">{esc(L['a_uncertainty'])}</p>
 <div class="limits">{bullets(data.get('limitations', []), 'a_limits_empty')}</div></section>
 {legend_html(L, m.get('axis'), 'level-legend')}
-<section id="priority-queue"><h2>{esc(L['a_queue'])}</h2><p class="section-note">{esc(L['a_queue_note'])}</p>{verify_legend}{queue_html}</section>
+<section id="triage-lanes"><h2>{esc(L['cx_board_h'])}</h2><p class="section-note">{esc(L['a_queue_note'])}</p>{verify_legend}
+<div id="priority-queue">{queue_html}</div>{closed_lanes_html}</section>
 {decisions_html}{next_steps_html}
 <section id="recorded-coverage"><h2>{esc(L['a_coverage'])}</h2><p class="section-note">{esc(L['a_coverage_note'])}</p>
 {coverage_html}{ledger_html(data, lang)}<h3>{esc(L['a_checks'])}</h3>{bullets(data.get('checked_ok', []), 'a_checks_empty')}</section>
@@ -2052,15 +2237,25 @@ __STYLE__
 </head>
 <body>
 <a class="skip" href="#findings" data-l="jump_findings"></a>
-<header class="appbar"><div class="appbar-in"><span class="brand"><span data-l="eyebrow"></span><span class="appbar-project" id="appbar-project"></span></span><div class="tools"><a class="button" href="assessment.html" data-l="assessment_link"></a><button id="theme" type="button" data-l="theme"></button></div></div></header>
+<header class="cx-band"><div class="cx-band-in"><div data-cx="ident"></div><div class="cx-side"><dl class="cx-readout" data-cx="readout"></dl><div class="cx-tools"><a class="button" href="assessment.html" data-l="cx_assessment_link"></a><button id="theme" type="button" data-l="theme"></button></div></div></div></header>
+<div class="cx" id="console"><div class="cx-grid">
+<section class="cx-p cx-sev" data-cx="severity" aria-labelledby="cx-sev-h"></section>
+<section class="cx-p cx-ver" data-cx="verdicts" aria-labelledby="cx-ver-h"></section>
+<section class="cx-p cx-cov" data-cx="perspectives" aria-labelledby="cx-cov-h"></section>
+<section class="cx-triage" id="triage" tabindex="-1" aria-labelledby="cx-triage-h"><h2 class="cx-ph" id="cx-triage-h"><b data-l="cx_board_h"></b><span data-l="cx_board_note"></span></h2><div class="cx-triage-in"><div class="cx-board" data-cx="board"></div><aside class="cx-insp" data-cx="inspector" aria-live="polite"></aside></div></section>
+</div></div>
 <div class="shell">
 <nav class="sidebar" id="nav"><h2 class="nav-title" data-l="contents"></h2><ol class="nav-links">
-<li><a href="#overview" data-l="summary"></a></li><li><a href="#priority-section" data-l="priority"></a></li><li><a href="#decisions-section" data-l="decisions"></a></li><li><a href="#coverage" data-l="nav_coverage"></a></li><li><a href="#level-legend" data-l="legend"></a></li><li><a href="#findings" data-l="findings_register"></a></li><li><a href="#lists" data-l="nav_lists"></a></li>
+<li><a href="#triage" data-l="cx_board_h"></a></li><li><a href="#findings" data-l="findings_register"></a></li><li><a href="#overview" data-l="summary"></a></li><li><a href="#priority-section" data-l="priority"></a></li><li><a href="#decisions-section" data-l="decisions"></a></li><li><a href="#coverage" data-l="nav_coverage"></a></li><li><a href="#level-legend" data-l="legend"></a></li><li><a href="#lists" data-l="nav_lists"></a></li>
 </ol><div class="facets"><h2 class="nav-title" data-l="severity"></h2><div id="facets"></div></div>
 <dl class="keys"><dt data-l="shortcuts" class="nav-title"></dt><dd><kbd>/</kbd> <span data-l="key_search"></span></dd><dd><kbd>j</kbd> <kbd>k</kbd> <span data-l="key_move"></span></dd><dd><kbd>Enter</kbd> <span data-l="key_toggle"></span></dd></dl></nav>
 <main>
+<section id="findings" tabindex="-1" aria-labelledby="findings-heading"><div class="section-head"><div><h2 id="findings-heading" data-l="findings_register"></h2><p data-l="findings_note"></p></div></div>
+<div class="panel filters-panel"><div class="filters">
+<label><span data-l="record_set"></span><select id="f-scope"></select></label><label><span data-l="part"></span><select id="f-part"></select></label><label><span data-l="severity"></span><select id="f-sev"></select></label><label><span data-l="confidence"></span><select id="f-conf"></select></label><label><span data-l="category"></span><select id="f-cat"></select></label><label><span data-l="status"></span><select id="f-status"></select></label><label><span data-l="verdict"></span><select id="f-verdict"></select></label><label><span data-l="sort"></span><select id="f-sort"></select></label><label class="search"><span data-l="search"></span><input id="f-q" type="search"></label></div><div class="filter-bottom"><p class="result-count" id="result-count" role="status" aria-live="polite"></p><button type="button" id="reset" data-l="reset"></button></div></div>
+<div class="tablewrap"><table class="register"><thead><tr><th scope="col">ID</th><th scope="col" data-l="severity"></th><th scope="col" data-l="confidence"></th><th scope="col" data-l="status"></th><th scope="col" data-l="verdict"></th><th scope="col" data-l="title_col"></th><th scope="col" data-l="category"></th></tr></thead><tbody id="rows"></tbody></table></div></section>
 <section id="overview" tabindex="-1" aria-labelledby="h">
-<div class="hero"><div><div class="eyebrow" data-l="dash_title"></div><h1 id="h"></h1><div class="meta" id="meta"></div></div><div class="hero-aside" data-l="report_note"></div></div>
+<div class="hero"><div><div class="eyebrow" data-l="dash_title"></div><h2 id="h" data-l="summary"></h2><div class="meta" id="meta"></div></div><div class="hero-aside" data-l="report_note"></div></div>
 <div class="summary-banner" id="summary"></div>
 <div class="cards" id="cards"></div><p class="report-note" data-l="counts_note"></p>
 <div class="cards part-cards" id="part-cards"></div><p class="report-note" data-l="part_note"></p>
@@ -2073,16 +2268,13 @@ __THREE_PASS__
 <details class="panel coverage" id="coverage" tabindex="-1" open><summary><span data-l="coverage_heading"></span><span class="small" id="coverage-count"></span></summary><p data-l="coverage_note"></p><dl class="scope-meta" id="scope-meta"></dl><div class="coverage-columns"><section><h3 data-l="limitations"></h3><div id="limitations"></div></section><section><h3 data-l="perspectives"></h3><div id="perspectives"></div></section></div></details>
 __LEGEND__
 <details class="chart-section"><summary data-l="overview"></summary><p class="section-note" data-l="count_basis"></p><div class="grid"><div class="panel"><h3 data-l="by_sev"></h3><div id="c-sev"></div></div><div class="panel"><h3 data-l="by_conf"></h3><div id="c-conf"></div></div><div class="panel"><h3 data-l="by_cat"></h3><div id="c-cat"></div></div><div class="panel"><h3 data-l="by_status"></h3><div id="c-status"></div></div><div class="panel"><h3 data-l="by_verdict"></h3><div id="c-verdict"></div><p class="section-note" data-l="excluded_note"></p></div></div></details>
-<section id="findings" tabindex="-1" aria-labelledby="findings-heading"><div class="section-head"><div><h2 id="findings-heading" data-l="findings_register"></h2><p data-l="findings_note"></p></div></div>
-<div class="panel filters-panel"><div class="filters">
-<label><span data-l="record_set"></span><select id="f-scope"></select></label><label><span data-l="part"></span><select id="f-part"></select></label><label><span data-l="severity"></span><select id="f-sev"></select></label><label><span data-l="confidence"></span><select id="f-conf"></select></label><label><span data-l="category"></span><select id="f-cat"></select></label><label><span data-l="status"></span><select id="f-status"></select></label><label><span data-l="verdict"></span><select id="f-verdict"></select></label><label><span data-l="sort"></span><select id="f-sort"></select></label><label class="search"><span data-l="search"></span><input id="f-q" type="search"></label></div><div class="filter-bottom"><p class="result-count" id="result-count" role="status" aria-live="polite"></p><button type="button" id="reset" data-l="reset"></button></div></div>
-<div class="tablewrap"><table class="register"><thead><tr><th scope="col">ID</th><th scope="col" data-l="severity"></th><th scope="col" data-l="confidence"></th><th scope="col" data-l="status"></th><th scope="col" data-l="verdict"></th><th scope="col" data-l="title_col"></th><th scope="col" data-l="category"></th></tr></thead><tbody id="rows"></tbody></table></div></section>
 <div class="lists" id="lists" tabindex="-1"></div><footer class="footer" data-l="source_note"></footer>
 <noscript><p>__NOSCRIPT__ <a href="assessment.html">__ASSESSMENT__</a></p></noscript>
 </main>
 </div>
 <script id="data" type="application/json">__DATA__</script>
 <script>
+__CONSOLE_JS__
 (function(){
 'use strict';
 var D=JSON.parse(document.getElementById('data').textContent),L=D.labels,ALL=D.findings,R=D.report;
@@ -2101,7 +2293,7 @@ function ownValue(map,key){return map&&Object.prototype.hasOwnProperty.call(map,
 function action(f){var proof=R.verification[f.id],workflow=ownValue(R.workflows,f.id);return f.status==='Open'&&f.verdict==='Valid'&&f.confidence==='Confirmed'&&proof&&['static_supported','runtime_supported'].indexOf(proof.level)>=0&&(!workflow||workflow.status==='complete')?'fix_now':'verify_first';}
 function count(fs,key){var c=Object.create(null);fs.forEach(function(f){c[f[key]]=(c[f[key]]||0)+1;});return c;}
 function listInto(box,items,empty){if(!items.length){box.appendChild(el('p',{'class':'muted'},empty));return;}var ul=el('ul');items.forEach(function(x){ul.appendChild(el('li',null,x));});box.appendChild(ul);}
-document.title=L.dash_title+' - '+D.meta.project;byId('h').textContent=D.meta.project;byId('appbar-project').textContent=D.meta.project;byId('nav').setAttribute('aria-label',L.contents);
+document.title=L.dash_title+' - '+D.meta.project;byId('nav').setAttribute('aria-label',L.contents);
 byId('meta').textContent=[D.meta.date,D.meta.assessor].filter(Boolean).join(' · ');
 document.querySelectorAll('[data-l]').forEach(function(e){e.textContent=L[e.getAttribute('data-l')];});
 byId('theme').onclick=function(){var root=document.documentElement,dark=root.dataset.theme?root.dataset.theme==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;root.dataset.theme=dark?'light':'dark';};
@@ -2194,6 +2386,8 @@ if(window.ResizeObserver){var register=byId('findings');new window.ResizeObserve
 var navLinks=Array.from(byId('nav').querySelectorAll('a[href^="#"]'));if(window.IntersectionObserver){var visible=new Map(),spy=new window.IntersectionObserver(function(entries){entries.forEach(function(en){visible.set(en.target.id,en.isIntersecting);});var first=navLinks.find(function(a){return visible.get(a.getAttribute('href').slice(1));});navLinks.forEach(function(a){if(a===first)a.setAttribute('aria-current','location');else a.removeAttribute('aria-current');});},{rootMargin:'-35% 0px -60% 0px'});navLinks.forEach(function(a){var s=byId(a.getAttribute('href').slice(1));if(s)spy.observe(s);});}
 listInto(byId('decisions'),D.decisions,L.not_recorded);
 ['next_steps','checked_ok'].forEach(function(k){var p=el('section',{'class':'panel'});p.appendChild(el('h2',null,L[k]));listInto(p,D[k],L.not_recorded);byId('lists').appendChild(p);});
+// Console layer: band, panels, triage board and inspector; its copy reuses the register's Markdown.
+window.AgenticConsole.mount(D.console,{root:document,copy:function(card){var f=ALL.find(function(x){return String(x.id)===card.id;});return copyText(findingMarkdown(f));}});
 })();
 </script>
 </body>
@@ -2237,7 +2431,8 @@ td .verification-level{font-family:var(--sans);font-size:11px;font-weight:400;co
 table.register>tbody>tr>td:nth-child(3),table.register>tbody>tr>td:nth-child(5){overflow-wrap:break-word}
 @media(min-width:851px){.app-shell table.register>thead>tr>th:nth-child(3){width:120px}.app-shell table.register>thead>tr>th:nth-child(5){width:116px}}
 """
-DASHBOARD = DASHBOARD.replace("__STYLE__", report_style.dashboard_css() + DASHBOARD_CSS, 1)
+DASHBOARD = DASHBOARD.replace("__STYLE__", report_style.dashboard_css() + DASHBOARD_CSS + report_style.console_css(), 1)
+DASHBOARD = DASHBOARD.replace("__CONSOLE_JS__", report_style.console_js(), 1)
 
 
 def render_dashboard(data, L, lang, integrity=None):
@@ -2265,6 +2460,7 @@ def render_dashboard(data, L, lang, integrity=None):
         "verification_summary": verification_summary_parts(model, L),
         "integrity_summary": integrity_summary_view(verification_states, active(data), L),
         "anchors": {str(f["id"]): finding_anchor(data, f) for f in data["findings"]},
+        "console": console_model(data, model, L),
         "parts": list(PARTS),
         "order": {"severity": SEVERITIES, "confidence": CONFIDENCES, "status": STATUSES, "verdict": VERDICTS},
         "excluded_verdicts": sorted(EXCLUDED),

@@ -12,3 +12,16 @@ def _asset(name):
 def dashboard_css():
     """Stylesheet for the interactive dashboard (light and dark themes)."""
     return _asset("dashboard.css")
+
+
+def console_css():
+    """console-triage layer (band, tiles, lanes, inspector); inlined after the page's own stylesheet."""
+    return _asset("console.css")
+
+
+def console_js():
+    """console-triage renderer: defines window.AgenticConsole; contains no script end tag."""
+    text = _asset("console.js")
+    if "</" in text:
+        raise ValueError("console.js must not contain '</' when inlined into a script element")
+    return text

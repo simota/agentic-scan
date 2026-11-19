@@ -171,7 +171,8 @@ skills/architecture-scan/
   scripts/compare.py           an earlier findings.json against a later one: new, resolved, persisting;
                                carries triage forward and gates regressions
   scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and IDE viewers
-  scripts/report_style.py      loads report_assets/dashboard.css, the dashboard stylesheet
+  scripts/report_style.py      loads report_assets/dashboard.css (the dashboard stylesheet) and
+                               console.{css,js} (the console-triage layer)
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or tech lead
 examples/findings.sample.json  fictional sample for make demo / make check
@@ -198,6 +199,18 @@ The dashboard uses the stylesheet in
 (light and dark themes, journal-style typography) comes first, and `render.py`
 adds only the rules for architecture-scan's own records (the findings register,
 coloured severity bars). The page opts into the kit's application shell: a
-sticky app bar, a contents sidebar with per-severity counts that filter the
+contents sidebar with per-severity counts that filter the
 register, pinned register filters and head row, and the keys `/` (search),
 `j`/`k` (next or previous finding) and Enter (show or hide details). The kit is maintained in this repository; edit it in place.
+
+The console-triage layer is inlined last: `report_assets/console.css` (brand
+tokens, the band header, severity tiles, verdict strip, perspective lamps, the
+four-lane triage board and its inspector) and `report_assets/console.js`, which
+opens the one page script and draws the `console-data` model that
+`console_model()` in `render.py` builds. The band (project, context, headline,
+open / closed / excluded counts) is plain HTML; the board is drawn by the
+script, as the filters are. Lanes come from `action()` (Plan the fix / Verify
+first) for open findings, then closed statuses and excluded verdicts; the
+findings register leads the page. These two files are copies of
+`artifacts/report-style/console/` at the repository root; change them there and
+copy them back.

@@ -31,25 +31,30 @@ class ReportViewTest(unittest.TestCase):
         # Printed excerpts wrap: inside the dashboard's print block; always in the paper document.
         self.assertRegex(dash, r"@media print\{[^@]*\.snippet\{white-space:pre-wrap;overflow:visible\}")
         self.assertRegex(report, r"\.snippet\{[^}]*white-space:pre-wrap;[^}]*overflow:visible")
-        # Print is light: the kit's dashboard CSS forces its light tokens; the document has no dark theme at all.
+        # Print is light: the kit forces light tokens and the console skips the document in both dark modes.
         self.assertIn('@media print{html:root:not([data-theme="light"]),html:root[data-theme]{color-scheme:light', dash)
-        self.assertNotIn("prefers-color-scheme", report)
-        self.assertNotIn("data-theme", report)
+        self.assertIn('<html lang="en" class="cx-doc">', report)
+        for dark_selector in (':root:not([data-theme="light"])', ':root[data-theme="dark"]'):
+            self.assertIn(dark_selector + ':not(.cx-doc)', report)
+            self.assertNotIn(dark_selector + ' {', report)
         self.assertIn("tr.row:not([hidden])+tr.detail{display:table-row!important}", dash)
         self.assertNotIn("tr.detail{display:table-row!important}}", dash.replace("+tr.detail", ""))
         self.assertIn(".ap{break-inside:avoid-page}", report)
-        self.assertNotIn("opacity", dash + report)
+        for page in (dash, report):
+            opacity_rules = re.findall(r"([^\n{}]+)\s*\{[^{}]*\bopacity:", page.split("</style>")[0])
+            self.assertEqual([rule.strip() for rule in opacity_rules], [".cx-t-mid", ".cx-t-weak"])
 
     def test_dashboard_opts_into_the_kit_application_shell(self):
-        # The kit scopes its app bar, sidebar and pinned register to html.app-shell.
+        # The kit scopes its sidebar and pinned register to html.app-shell.
         dash, _ = pages(SAMPLE, "en")
         data = json.loads(SAMPLE.read_text(encoding="utf-8"))
         self.assertIn('<html lang="en" class="app-shell">', dash)
-        self.assertIn('<header class="appbar">', dash)
+        self.assertIn('<header class="cx-band">', dash)
         self.assertNotIn('class="masthead"', dash)
         nav = dash.split('<nav class="sidebar"')[1].split("</nav>")[0]
         hrefs = re.findall(r'<a href="#([^"]+)">', nav)
-        self.assertEqual(len(hrefs), 7)
+        self.assertEqual(len(hrefs), 8)
+        self.assertEqual(hrefs[:2], ["triage", "findings"])
         for href in hrefs:
             self.assertIn(f'id="{href}"', dash, href)
         # Facets count what the severity cards count.
@@ -123,7 +128,7 @@ class ReportViewTest(unittest.TestCase):
 
     def test_theme_toggle_exposes_its_state(self):
         dash, _ = pages(SAMPLE, "en")
-        self.assertIn('<button id="theme" type="button" aria-pressed="false">Dark theme</button>', dash)
+        self.assertIn('<button id="theme" type="button" aria-pressed="false">Toggle color theme</button>', dash)
         self.assertIn("themeBtn.setAttribute('aria-pressed',String(dark()))", dash)
 
     def test_unchecked_perspectives_stand_out_and_the_counts_corner_heads_nothing(self):

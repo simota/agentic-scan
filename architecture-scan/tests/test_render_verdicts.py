@@ -7,13 +7,18 @@ from test_architecture_scan import complete_doc, finding, findings, render
 
 
 class DashboardText(HTMLParser):
-    """Collect the visible overview and each collapsed finding's label."""
+    """Collect the visible overview and each collapsed finding's label.
+
+    The overview is all text outside a details element: the register leads the
+    page, so the counts no longer precede the first finding, but they still read
+    without opening one.
+    """
 
     def __init__(self, source):
         super().__init__()
         self.overview = []
         self.summaries = []
-        self.before_findings = True
+        self.details = 0
         self.in_summary = False
         self.diagram_text = False
         self.ignored = False
@@ -23,7 +28,7 @@ class DashboardText(HTMLParser):
         if tag in ("style", "script"):
             self.ignored = True
         elif tag == "details":
-            self.before_findings = False
+            self.details += 1
             # The diagrams' text alternative is no finding.
             self.diagram_text = ("class", "arch-text") in attrs
         elif tag == "summary" and not self.diagram_text:
@@ -35,10 +40,12 @@ class DashboardText(HTMLParser):
             self.ignored = False
         elif tag == "summary":
             self.in_summary = False
+        elif tag == "details":
+            self.details -= 1
 
     def handle_data(self, value):
         if not self.ignored:
-            if self.before_findings:
+            if not self.details:
                 self.overview.append(value)
             if self.in_summary:
                 self.summaries[-1].append(value)

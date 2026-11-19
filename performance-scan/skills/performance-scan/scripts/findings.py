@@ -19,7 +19,8 @@ Run merges to the same FINDINGS sequentially; atomic replacement does not
 detect concurrent updates.
 
 `check` is the run contract: the output directory holds exactly
-`findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
+`findings.json`, `dashboard.html`, `report.md` and, when present, `assessment.html`
+(plus `--allow` names), the
 required outputs are readable nonempty regular files, the record is complete,
 IDs are gapless in severity order and every perspective in
 `reference/perspectives.md` is recorded.
@@ -29,7 +30,7 @@ findings in place (atomically, like `merge`) and appends `--decision` to
 `decisions`. A finding that becomes `Accepted` needs a decision (who accepts
 the cost, and why), and `check` requires every `Accepted` finding to be named
 in `decisions`; a decision that names none of the IDs is prefixed with them. Excluded findings (`FalsePositive`, `NotApplicable`) have
-no status to change. `--render` re-renders `dashboard.html` and `report.md`
+no status to change. `--render` re-renders `dashboard.html`, `assessment.html` and `report.md`
 beside FINDINGS so the outputs stay current.
 
 Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
@@ -98,6 +99,8 @@ REFERENCE_KEYS = frozenset(("url", "title"))
 BUDGET_KEYS = frozenset(("id", "statement", "source", "family", "inferred", "status", "reason"))
 PERSPECTIVE_KEYS = frozenset(("name", "status", "note"))
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
+# Older run directories may predate the printable assessment.
+ASSESSMENT = "assessment.html"
 FINDING_ID = re.compile(r"P-[0-9]{3}")
 BUDGET_ID = re.compile(r"B-[0-9]{2,}")
 # Budget IDs are ASCII, so only ASCII identifier characters bound a mention;
@@ -510,7 +513,7 @@ def _output_problems(out, present, allow):
     problems = []
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
-    for name in sorted(present - OUTPUTS - set(allow)):
+    for name in sorted(present - OUTPUTS - {ASSESSMENT} - set(allow)):
         if name.isprintable():
             problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
         else:
@@ -518,7 +521,7 @@ def _output_problems(out, present, allow):
             # unprintable character. Its escaped form is not a usable --allow value.
             problems.append(f"unexpected output: {name!r} (rename or remove it)")
     readable = set()
-    for name in sorted(OUTPUTS & present):
+    for name in sorted((OUTPUTS | {ASSESSMENT}) & present):
         path = out / name
         try:
             # Follow valid symlinks, but never open a FIFO or device as a report.
@@ -781,7 +784,7 @@ def main(argv=None):
     s.add_argument("--decision", help="appended to decisions; required when a finding "
                                       "becomes Accepted")
     s.add_argument("--render", action="store_true",
-                   help="re-render dashboard.html and report.md beside FINDINGS")
+                   help="re-render dashboard.html, assessment.html and report.md beside FINDINGS")
     s.set_defaults(func=cmd_set)
     args = parser.parse_args(argv)
     escape_unencodable_console()

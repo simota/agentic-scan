@@ -49,7 +49,11 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("<p data-empty", render.render_html({**complete_doc(), "findings": []}, "en"))
 
     def test_excluded_findings_keep_full_contrast(self):
-        self.assertNotIn("opacity", page_style())
+        # The console layer fades only two verdict swatches (Likely, Unlikely), never a record.
+        style = page_style().replace(render.report_style.console_css(), "")
+        self.assertNotIn("opacity", style)
+        faded = re.findall(r"([^{}]+)\{[^}]*opacity", render.report_style.console_css())
+        self.assertEqual([selector.strip() for selector in faded], [".cx-t-mid", ".cx-t-weak"])
 
     def test_long_titles_and_project_names_wrap(self):
         style = page_style()
@@ -66,10 +70,13 @@ class DashboardTests(unittest.TestCase):
 
 
     def test_the_dashboard_opts_into_the_kits_application_shell(self):
-        # The kit scopes its app bar, sidebar and pinned filters to html.app-shell.
+        # The kit scopes its sidebar and pinned filters to html.app-shell; the console band
+        # replaces its app bar and holds the page's one h1.
         html = render.render_html(complete_doc(), "en")
         self.assertIn("<html lang='en' class='app-shell'>", html)
-        self.assertIn("<header class='appbar'>", html)
+        self.assertIn("<header class='cx-band'>", html)
+        self.assertNotIn("class='appbar'", html)
+        self.assertEqual(len(re.findall(r"<h1[ >]", html)), 1)
         nav = re.search(r"<nav class='sidebar'.*?</nav>", html, re.S)[0]
         targets = re.findall(r'href="#([^"]+)"', nav)
         self.assertIn("findings", targets)

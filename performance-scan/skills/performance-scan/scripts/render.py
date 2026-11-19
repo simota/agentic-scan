@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Render findings.json into dashboard.html and report.md.
+"""Render findings.json into dashboard.html, assessment.html and report.md.
 
     python3 render.py FINDINGS --out DIR [--lang ja|en]
 
-Both outputs are derived from the one record; neither adds facts of its own.
+The outputs are derived from the one record; neither adds facts of its own.
 `dashboard.html` is self-contained and works offline. `report.md` follows the
 findings-report shape in `reference/report.md`.
 
@@ -12,6 +12,7 @@ could not be read or decoded, or does not match the schema, or a command-line
 usage error (reasons on stderr).
 """
 import argparse
+import json
 from html import escape
 import os
 from pathlib import Path
@@ -58,7 +59,7 @@ LABELS = {
         "title_col": "Title", "location_col": "Location", "findings_col": "Cited by", "budget_col": "Budget",
         "item_col": "Item", "value_col": "Value", "perspective_col": "Perspective", "lang": "en",
         "excluded_findings": "Excluded findings", "brand": "PERFORMANCE REVIEW",
-        "theme": "Toggle theme", "copy_llm": "Copy for LLM", "copied": "Copied",
+        "theme": "Toggle color theme", "copy_llm": "Copy for LLM", "copied": "Copied",
         "copy_failed": "Copy failed",
         "findings_note": "Open a finding for its cost model, evidence and fix direction. "
                          "Copy for LLM copies that finding as Markdown.",
@@ -571,9 +572,21 @@ tr:last-child td{border-bottom:0}
 .app-shell details[data-sev]:focus-within>summary{background:var(--tint);box-shadow:inset 2px 0 0 var(--text)}
 @media print{.app-shell details[data-sev]:focus-within>summary{background:none;box-shadow:none}}
 """
-CSS = report_style.dashboard_css() + CSS
+CSS = report_style.dashboard_css() + CSS + report_style.console_css()
 
-JS = """
+ASSESSMENT_CSS = """
+.cx-doc .cards{display:flex;gap:1em;flex-wrap:wrap}
+.cx-doc .cards .n{margin-left:.4em}
+.cx-doc #findings details{border-top:1px solid var(--line);padding:3mm 0}
+.cx-doc #findings summary{font-weight:700;break-after:avoid;overflow-wrap:anywhere}
+.cx-doc #findings dt{font-weight:700;break-after:avoid}
+.cx-doc #findings dd{margin:0 0 2mm;white-space:pre-wrap}
+.cx-doc pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+.cx-doc .queue th:first-child{width:21%}
+.cx-doc .queue th:last-child{width:23%}
+"""
+
+JS = report_style.console_js() + """
 const filters=[...document.querySelectorAll('[data-filter]')],facets=[...document.querySelectorAll('.facet')],
 count=document.getElementById('result-count');
 function filter(s){filters.forEach(x=>x.setAttribute('aria-pressed',x.dataset.filter===s));
@@ -618,6 +631,23 @@ b.addEventListener('click',()=>{const done=s=>{b.textContent=s;clearTimeout(time
 announce.textContent='';setTimeout(()=>{announce.textContent=s;},50);
 timer=setTimeout(()=>{b.textContent=label;},2000);};
 copyText(b.dataset.llm).then(()=>done(b.dataset.copied),()=>done(b.dataset.failed));});});
+function openRecord(){
+  const record=document.getElementById(location.hash.slice(1));
+  if(!record||!record.matches('details[data-sev]'))return;
+  if(record.hidden)filter('all');
+  record.open=true;
+  record.scrollIntoView({block:'start'});
+  record.querySelector('summary').focus({preventScroll:true});
+}
+window.addEventListener('hashchange',openRecord);
+document.addEventListener('click',e=>{
+  const link=e.target.closest('.cx-insp a');
+  if(link&&link.hash===location.hash){e.preventDefault();openRecord();}
+});
+openRecord();
+const D=JSON.parse(document.getElementById('data').content.textContent);
+window.AgenticConsole.mount(D.console,{root:document,copy:card=>
+  copyText(document.getElementById(card.anchor).querySelector('[data-llm]').dataset.llm)});
 """
 
 
@@ -689,7 +719,11 @@ def llm_finding(f, t, meta):
     return "\n".join(out) + "\n"
 
 
-def html_finding(f, t, meta):
+def anchor(f):
+    return f"finding-{f['id'].lower()}"
+
+
+def html_finding(f, t, meta, assessment=False):
     """One finding's <details>; an excluded finding shows its verdict instead of a status."""
     e, lang = html_text, t["lang"]
     v = f["validation"]
@@ -713,11 +747,14 @@ def html_finding(f, t, meta):
         rows.append((t["status"], shown(finding_status(f), lang)))
     if "measurement" in f:
         rows.append((t["environment"], f["measurement"]["environment"]))
-    out = [f"<details data-sev='{group}'><summary>{badge} {e(f['id'])} {e(f['title'])} "
-           f"<span class='small'>· {facts}{e(f['confidence'])} · {e(f['category'])}{step}</span></summary>"
-           f"<div class='detail-actions'><button type='button' class='copy-finding' "
-           f"data-llm='{escape(llm_finding(f, t, meta))}' data-copied='{e(t['copied'])}' "
-           f"data-failed='{e(t['copy_failed'])}'>{e(t['copy_llm'])}</button></div><dl>"]
+    opened = " open" if assessment else ""
+    out = [f"<details id='{anchor(f)}' data-sev='{group}'{opened}><summary>{badge} {e(f['id'])} {e(f['title'])} "
+           f"<span class='small'>· {facts}{e(f['confidence'])} · {e(f['category'])}{step}</span></summary>"]
+    if not assessment:
+        out.append(f"<div class='detail-actions'><button type='button' class='copy-finding' "
+                   f"data-llm='{escape(llm_finding(f, t, meta))}' data-copied='{e(t['copied'])}' "
+                   f"data-failed='{e(t['copy_failed'])}'>{e(t['copy_llm'])}</button></div>")
+    out.append("<dl>")
     out += [f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows]
     for run in MEASUREMENT_RUNS if "measurement" in f else ():
         r, label = f["measurement"][run], f"{t['measurement']} ({t[run]})"
@@ -731,71 +768,212 @@ def html_finding(f, t, meta):
     return "".join(out)
 
 
+CONSOLE_LABELS = {
+    "en": dict(
+        cx_assessment_link="Printable report",
+        cx_readout="Record status", cx_readout_open="open", cx_readout_closed="closed", cx_readout_excluded="excluded",
+        cx_severity_h="Severity", cx_severity_note="{n} included records; {x} excluded are not counted",
+        cx_tile_sub="open {open} · closed {closed}", cx_legend_cell="1 cell = 1 record.",
+        cx_legend_open="open", cx_legend_closed="fixed or accepted",
+        cx_verdict_h="Verdict", cx_verdict_note="all {n} records; excluded verdicts kept as their own block",
+        cx_perspective_h="Perspectives", cx_perspective_note="{n} perspectives",
+        cx_perspectives_empty="No perspectives recorded.",
+        cx_board_h="Triage", cx_board_note="every record in one lane; pick a card to inspect it",
+        cx_lane_empty="None", cx_inspector_h="Inspector", cx_inspector_empty="No records to inspect.",
+        cx_copy="Copy for Issue / LLM", cx_open_record="Open in register",
+        cx_where_h="Where", cx_evidence_h="Evidence", cx_evidence_method="method: {method}", cx_fix_h="Fix direction",
+        cx_empty_records="No records.", cx_read_only="read-only",
+        cx_lane_closed="CLOSED", cx_lane_excluded="EXCLUDED",
+        cx_lane_note_closed="Fix recorded or risk accepted.",
+        cx_lane_note_excluded="False positive or not applicable; kept with the justification."),
+    "ja": dict(
+        cx_assessment_link="印刷用レポート",
+        cx_readout="対応状況", cx_readout_open="open", cx_readout_closed="closed", cx_readout_excluded="excluded",
+        cx_severity_h="Severity", cx_severity_note="集計対象 {n} 件（除外 {x} 件は数えない）",
+        cx_tile_sub="未解決 {open} · 対応済 {closed}", cx_legend_cell="1 マス = 1 件。",
+        cx_legend_open="未解決", cx_legend_closed="対応済み（Fixed / Accepted）",
+        cx_verdict_h="Verdict", cx_verdict_note="記録 {n} 件の判定。除外の判定は独立した区画",
+        cx_perspective_h="Perspectives", cx_perspective_note="観点 {n}",
+        cx_perspectives_empty="観点の記録がありません。",
+        cx_board_h="Triage", cx_board_note="全件をいずれかのレーンに置いています。カードを選ぶと詳細を表示します",
+        cx_lane_empty="該当なし", cx_inspector_h="Inspector", cx_inspector_empty="表示できる記録がありません。",
+        cx_copy="Issue / LLM 用にコピー", cx_open_record="一覧で開く",
+        cx_where_h="該当箇所", cx_evidence_h="根拠", cx_evidence_method="method: {method}", cx_fix_h="修正方針",
+        cx_empty_records="記録がありません。", cx_read_only="read-only",
+        cx_lane_closed="CLOSED / 対応済・受容", cx_lane_excluded="EXCLUDED / 誤検知・除外",
+        cx_lane_note_closed="修正の申告（Fixed）または受容（Accepted）",
+        cx_lane_note_excluded="誤検知・対象外として根拠つきで保持"),
+}
+for language, console_labels in CONSOLE_LABELS.items():
+    LABELS[language].update(console_labels)
+
+
+LANE_TONES = {"open": "high",
+              "closed": "low", "excluded": "accent"}
+
+
+def console_lane(f):
+    if is_excluded(f):
+        return "excluded"
+    if finding_status(f) != "Open":
+        return "closed"
+    return "open"
+
+
+def console_model(doc, lang):
+    t = LABELS[lang]
+    meta = doc["meta"]
+    labels = {key[3:]: value for key, value in t.items() if key.startswith("cx_")}
+    labels.update(copied=t["copied"], copy_failed=t["copy_failed"], location=t["location"],
+                  evidence_missing=t["none"])
+    lane_text = {
+        "open": ("OPEN" if lang == "en" else "OPEN / 未解決",
+                 "Open findings in register order." if lang == "en" else "未解決の指摘を一覧と同じ順に表示します。"),
+    }
+    for key in ("closed", "excluded"):
+        lane_text[key] = (labels["lane_" + key], labels["lane_note_" + key])
+
+    def plain(value):
+        return "\n".join(text_lines(value)) if value else ""
+
+    records = []
+    for f in doc.get("findings", []):
+        v, lane = f["validation"], console_lane(f)
+        location = "\n".join(finding_locations(f))
+        status = finding_status(f)
+        excluded = lane == "excluded"
+        values = {"location": location}
+        for key in ("category", "workload", "scale_driver", "request", "impact"):
+            values[key] = f.get(key)
+        records.append({
+            "id": f["id"], "severity": f["severity"], "status": status,
+            "status_label": t["excluded"] if excluded else shown(status, lang),
+            "verdict": v["verdict"], "title": plain(f["title"]), "location": plain(location.split("\n", 1)[0]),
+            "lane": lane, "open": lane not in ("closed", "excluded"), "excluded": excluded, "anchor": anchor(f),
+            "tags": [f["confidence"]],
+            "where": [{"label": t["perspective_col"] if key == "category" else t[key],
+                       "value": plain(value), "mono": key == "location"}
+                      for key, value in values.items() if value and value.strip()],
+            "evidence": {"text": plain(v.get("evidence")), "method": shown(v["method"], lang),
+                         "notes": [labels["lane_note_excluded"]] if excluded else []},
+            "fix": plain(f.get("fix")),
+        })
+    lamps = report_style.perspective_lamps(doc, records, lambda status: shown(status, lang))
+    for lamp in lamps:
+        lamp["note"] = plain(lamp["note"])
+    return {
+        "meta": {"skill": "performance-scan", "title": plain(meta.get("project")), "title_id": "cx-title",
+                 "context": [plain(meta.get(key)) for key in ("date", "commit", "scope")] + [labels["read_only"]]},
+        "counts": {"open": sum(f["open"] for f in records), "closed": sum(f["lane"] == "closed" for f in records),
+                   "excluded": sum(f["excluded"] for f in records), "total": len(records)},
+        "severities": list(SEVERITIES),
+        "verdicts": [{"key": v, "label": v, "tone": report_style.VERDICT_TONES.get(v), "excluded": v in EXCLUDED}
+                     for v in VERDICTS],
+        "lanes": [{"key": key, "label": lane_text[key][0], "note": lane_text[key][1], "tone": tone}
+                  for key, tone in LANE_TONES.items()],
+        "perspectives": lamps, "findings": records, "labels": labels,
+    }
+
+
+def assessment_queue_table(t, records):
+    e = html_text
+    rows = "".join(
+        f"<tr><td><a href='#{e(f['anchor'])}'>{e(f['id'])}</a><br>{e(f['severity'])}</td>"
+        f"<td>{e(f['title'])}<br><code>{e(f['location'])}</code></td>"
+        f"<td>{e(f['verdict'])}</td></tr>" for f in records)
+    headers = "".join(f"<th scope='col'>{e(label)}</th>"
+                      for label in ("ID / " + t["severity"], t["title_col"], t["verdict"]))
+    return f"<table class='queue'><thead><tr>{headers}</tr></thead><tbody>{rows}</tbody></table>"
+
+
+def render_assessment_html(doc, lang):
+    return _render_page(doc, lang, assessment=True)
+
+
 def render_html(doc, lang):
+    return _render_page(doc, lang)
+
+
+def _render_page(doc, lang, assessment=False):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
     verdicts, incomplete_high = verification_summary(findings, t)
     e = html_text
-    nav = [("overview", t["nav_summary"]), ("findings", t["findings"])]
+    cm = console_model(doc, lang)
+    nav = [("triage", cm["labels"]["board_h"]), ("findings", t["findings"]), ("overview", t["nav_summary"])]
     nav += [("budgets", t["budgets"])] if doc.get("budgets") else []
     nav += [("coverage", t["perspectives"]), ("lists", t["nav_lists"])]
-    # The record's text is the bulk of the page, so it sets the document language.
-    out = [f"<!doctype html><html lang='{meta['lang']}' class='app-shell'><head><meta charset='utf-8'>",
-           "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-           f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body>",
-           f"<a class='skip' href='#findings'>{e(t['jump_findings'])}</a>",
-           f"<header class='appbar'><div class='appbar-in'><span class='brand'><span>{e(t['brand'])}</span>"
-           f"<span class='appbar-project'>{e(meta.get('project', ''))}</span></span>"
-           f"<div class='tools'><button type='button' id='theme'>{e(t['theme'])}</button></div></div></header>",
-           f"<div class='shell'><nav class='sidebar' id='nav' aria-label='{e(t['contents'])}'>"
-           f"<h2 class='nav-title'>{e(t['contents'])}</h2><ol class='nav-links'>"
-           + "".join(f"<li><a href='#{i}'>{e(label)}</a></li>" for i, label in nav) + "</ol>",
-           f"<div class='facets'><h2 class='nav-title'>{e(t['severity'])}</h2>"
-           + "".join(f"<button type='button' class='facet' data-sev='{s}' aria-pressed='false'>"
-                     f"<span class='facet-name {s}'>{s}</span><span class='facet-n'>{by_sev[s]}</span></button>"
-                     for s in SEVERITIES) + "</div>",
-           f"<dl class='keys'><dt class='nav-title'>{e(t['shortcuts'])}</dt>"
-           f"<dd><kbd>j</kbd> <kbd>k</kbd> {e(t['key_move'])}</dd>"
-           f"<dd><kbd>Enter</kbd> {e(t['key_toggle'])}</dd></dl></nav>",
-           "<main><section id='overview' tabindex='-1' aria-labelledby='h'>",
-           f"<div class='hero'><div><div class='eyebrow'>{e(t['title'])}</div>"
-           f"<h1 id='h'>{e(meta.get('project', ''))}</h1>",
-           f"<p class='meta'>{e(meta.get('scope', ''))} · {e(meta.get('commit', '').strip() or 'UNKNOWN')} · "
-           + (f"{e(meta['method'])} · " if meta.get("method", "").strip() else "")
-           + (f"{e(t['axis'])}: {e(t['axis_' + meta['axis']])} · "
-              if meta.get("axis") in AXES else "")
-           + f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p></div>"
-           f"<p class='hero-aside'>{e(review_note(findings, t))}</p></div>",
-           f"<p class='summary-banner'><strong>{e(incomplete_high)}</strong>{e(verdicts)}</p>",
-           "<div class='cards'>"]
+    overview = [f"<section id='overview' tabindex='-1' aria-labelledby='overview-heading'>",
+                     f"<div class='hero'><div><h2 class='eyebrow' id='overview-heading'>{e(t['title'])}</h2>",
+                f"<p class='meta'>{e(meta.get('scope', ''))} · {e(meta.get('commit', '').strip() or 'UNKNOWN')} · "
+                + (f"{e(meta['method'])} · " if meta.get("method", "").strip() else "")
+                + (f"{e(t['axis'])}: {e(t['axis_' + meta['axis']])} · "
+                   if meta.get("axis") in AXES else "")
+                + f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p></div>"
+                f"<p class='hero-aside'>{e(review_note(findings, t))}</p></div>",
+                f"<p class='summary-banner'><strong>{e(incomplete_high)}</strong>{e(verdicts)}</p>",
+                "<div class='cards'>"]
     for s in SEVERITIES:
-        out.append(f"<div class='card'><span class='l {s}'>{s}</span><b class='n'>{by_sev[s]}</b></div>")
-    out.append(f"<div class='card'><span class='l'>{e(t['excluded'])}</span><b class='n'>{excluded}</b></div></div>"
-               "</section>")
+        overview.append(f"<div class='card'><span class='l {s}'>{s}</span><b class='n'>{by_sev[s]}</b></div>")
+    overview.append(f"<div class='card'><span class='l'>{e(t['excluded'])}</span><b class='n'>{excluded}</b></div></div>"
+                    "</section>")
+    if assessment:
+        css = report_style.document_css(t["title"]) + ASSESSMENT_CSS + report_style.console_css()
+        out = [f"<!doctype html><html lang='{meta['lang']}' class='cx-doc'><head><meta charset='utf-8'>",
+               "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+               f"<title>{e(t['title'])}</title><style>{css}</style></head><body>",
+               report_style.console_band_html(cm, e, t["title"]),
+               f"<header class='report-header'><p class='kicker'>{e(t['scope'])}</p></header>",
+               report_style.console_tiles_html(cm, e), "<main>", *overview,
+               report_style.console_lanes_html(cm, e, lambda records: assessment_queue_table(t, records))]
+    else:
+        # The record's text is the bulk of the page, so it sets the document language.
+        out = [f"<!doctype html><html lang='{meta['lang']}' class='app-shell'><head><meta charset='utf-8'>",
+               "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+               f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body>",
+               f"<a class='skip' href='#findings'>{e(t['jump_findings'])}</a>",
+               report_style.console_header(
+                   f"<a class='button' href='assessment.html'>{e(cm['labels']['assessment_link'])}</a>"
+                   f"<button type='button' id='theme'>{e(t['theme'])}</button>"),
+               report_style.console_slots(cm["labels"], e),
+               f"<div class='shell'><nav class='sidebar' id='nav' aria-label='{e(t['contents'])}'>"
+               f"<h2 class='nav-title'>{e(t['contents'])}</h2><ol class='nav-links'>"
+               + "".join(f"<li><a href='#{i}'>{e(label)}</a></li>" for i, label in nav) + "</ol>",
+               f"<div class='facets'><h2 class='nav-title'>{e(t['severity'])}</h2>"
+               + "".join(f"<button type='button' class='facet' data-sev='{s}' aria-pressed='false'>"
+                         f"<span class='facet-name {s}'>{s}</span><span class='facet-n'>{by_sev[s]}</span></button>"
+                         for s in SEVERITIES) + "</div>",
+               f"<dl class='keys'><dt class='nav-title'>{e(t['shortcuts'])}</dt>"
+               f"<dd><kbd>j</kbd> <kbd>k</kbd> {e(t['key_move'])}</dd>"
+               f"<dd><kbd>Enter</kbd> {e(t['key_toggle'])}</dd></dl></nav>", "<main>"]
+
+    out.append(f"<section id='findings' tabindex='-1'><h2>{e(t['findings'])}</h2>"
+               f"<p class='section-note'>{e(t['findings_note'])}</p>")
+    if not assessment:
+        out.append(f"<div class='filters-panel'><div class='filters'><button type='button' data-filter='all' "
+                   f"aria-pressed='true'>{e(t['all'])}</button>"
+                   + "".join(f"<button type='button' data-filter='{s}' aria-pressed='false'>{s}</button>"
+                             for s in SEVERITIES)
+                   + f"<button type='button' data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button>"
+                   + "</div>"
+                   + (f"<div class='filter-bottom'><p class='result-count' id='result-count' role='status' "
+                      f"data-shown='{e(t['filter_shown'])}' data-empty='{e(t['filter_empty'])}'>"
+                      f"{e(t['filter_shown'].format(shown=len(findings), total=len(findings)))}</p></div>"
+                      if findings else "")
+                   + "</div>")
+    if not findings:
+        out.append(f"<p>{e(t['none'])}</p>")
+    out += [html_finding(f, t, meta, assessment) for f in findings]
+    out.append("</section>")
+    if not assessment:
+        out.extend(overview)
     groups, notes = level_legend(meta, t)
     out.append(f"<section id='levels' tabindex='-1'><h2>{e(t['levels'])}</h2>"
                + "".join(f"<h3>{e(heading)}</h3><dl class='legend'>"
                          + "".join(f"<dt>{e(name)}</dt><dd>{e(text)}</dd>" for name, text in entries)
                          + "</dl>" for heading, entries in groups)
                + "".join(f"<p class='section-note'>{e(note)}</p>" for note in notes) + "</section>")
-    out.append(f"<section id='findings' tabindex='-1'><h2>{e(t['findings'])}</h2>"
-               f"<p class='section-note'>{e(t['findings_note'])}</p>"
-               f"<div class='filters-panel'><div class='filters'><button type='button' data-filter='all' "
-               f"aria-pressed='true'>{e(t['all'])}</button>"
-               + "".join(f"<button type='button' data-filter='{s}' aria-pressed='false'>{s}</button>"
-                         for s in SEVERITIES)
-               + f"<button type='button' data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button>"
-               + "</div>"
-               + (f"<div class='filter-bottom'><p class='result-count' id='result-count' role='status' "
-                  f"data-shown='{e(t['filter_shown'])}' data-empty='{e(t['filter_empty'])}'>"
-                  f"{e(t['filter_shown'].format(shown=len(findings), total=len(findings)))}</p></div>"
-                  if findings else "")
-               + "</div>")
-    if not findings:
-        out.append(f"<p>{e(t['none'])}</p>")
-    out += [html_finding(f, t, meta) for f in findings]
-    out.append("</section>")
     if doc.get("budgets"):
         citations = budget_citations(findings)
         out.append(f"<section id='budgets' tabindex='-1'><h2>{e(t['budgets'])}</h2>"
@@ -812,8 +990,13 @@ def render_html(doc, lang):
         out.append(f"<section><h2>{e(t[key])}</h2>"
                    + ("<ul>" + "".join(f"<li>{e(i)}</li>" for i in items) + "</ul>" if items
                       else f"<p class='muted'>{e(t['none'])}</p>") + "</section>")
-    out.append("</div></main></div><p class='sr-only' id='announce' role='status'></p>"
-               f"<script>{JS}</script></body></html>")
+    out.append("</div></main>")
+    if not assessment:
+        data = escape(json.dumps({"console": cm}, ensure_ascii=False), quote=False)
+        out.append("</div><p class='sr-only' id='announce' role='status'></p>"
+                   f"<template id='data'>{data}</template>"
+                   f"<script>{JS}</script>")
+    out.append("</body></html>")
     return "".join(out)
 
 
@@ -909,7 +1092,8 @@ def main(argv=None):
     out = Path(args.out)
     try:
         outputs = [(out / "report.md", render_markdown(doc, lang).encode("utf-8")),
-                   (out / "dashboard.html", render_html(doc, lang).encode("utf-8"))]
+                   (out / "dashboard.html", render_html(doc, lang).encode("utf-8")),
+                   (out / "assessment.html", render_assessment_html(doc, lang).encode("utf-8"))]
         source = resolve_path(args.findings)
         if any(resolve_path(path) == source for path, _ in outputs):
             raise OSError("an output destination must not replace findings.json")
@@ -918,7 +1102,7 @@ def main(argv=None):
     except (OSError, UnicodeError) as exc:
         print(f"render: {exc}", file=sys.stderr)
         return 1
-    print(f"wrote {out / 'dashboard.html'} and {out / 'report.md'}")
+    print(f"wrote {out / 'dashboard.html'}, {out / 'assessment.html'} and {out / 'report.md'}")
     return 0
 
 

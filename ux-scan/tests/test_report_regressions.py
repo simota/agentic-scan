@@ -999,7 +999,7 @@ class ReportRegressions(unittest.TestCase):
                 self.assertEqual({name: (self.out / name).read_bytes() for name in before}, before)
                 self.assertTrue((self.out / render.OUTPUT_LOCK).is_dir())
             # The PDF engine must still see the English HTML owned by this run.
-            self.assertIn('<html lang="en">', Path(html_path).read_text(encoding="utf-8"))
+            self.assertIn('<html lang="en" class="cx-doc">', Path(html_path).read_text(encoding="utf-8"))
             return self.successful_engine(html_path, pdf_path)
 
         with mock.patch.object(render.pdf, "to_pdf", side_effect=competing_engine):

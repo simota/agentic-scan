@@ -73,6 +73,10 @@ old one reworded on other resources) before reporting it. `--fail-on
 newly open path, for a retest gate.
 
 Keep the chat, dashboard and PDF consistent: all are views of `findings.json`.
+In the dashboard and assessment, the triage lanes list non-excluded records
+under **OPEN** and false positives or inapplicable findings under **EXCLUDED**.
+The console readout and severity tiles include covered baseline hits among open
+records. The existing severity summary counts each root cause once.
 Re-rendering invalidates the previous `assessment.pdf`, including with
 `--no-pdf`. If PDF generation is skipped or fails, no old PDF is retained beside
 the updated HTML reports; only a newly generated PDF belongs to that run.

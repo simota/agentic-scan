@@ -18,8 +18,8 @@ h2{font-size:13pt;line-height:1.3;margin:9mm 0 3mm}
 h3{font-size:11pt;line-height:1.4;margin:5mm 0 2mm}
 h4{font:700 7.8pt/1.4 var(--sans);letter-spacing:.08em;color:var(--muted);margin:3.5mm 0 1mm}
 h5{font-size:9.5pt;margin:3mm 0 1mm}
-main>section>h2{counter-increment:section}
-main>section>h2::before{content:counter(section);display:inline-block;min-width:8mm;font-weight:400}
+main>section>h2,#priority-queue>h2{counter-increment:section}
+main>section>h2::before,#priority-queue>h2::before{content:counter(section);display:inline-block;min-width:8mm;font-weight:400}
 p{margin:0 0 2.5mm;orphans:3;widows:3}
 ul,ol{margin:1.5mm 0 3mm;padding-left:5mm}
 li{margin:0 0 1mm;orphans:2;widows:2}

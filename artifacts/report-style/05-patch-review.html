@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>パッチレビュー | security-scan | agentic-scan</title>
+  <style>
+:root {
+  color-scheme: light;
+  --bg: #f4f5f7; --surface: #ffffff; --term: #eceef2; --ink: #12161c;
+  --muted: #545d68; --line: #d3d8df; --accent: #1f3f66; --mark: #dfe7f2;
+  --high: #8a1c1c; --medium: #7a4800; --low: #24476e; --info: #5a5a5a;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Hiragino Sans", "Noto Sans JP", monospace;
+  --sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", Meiryo, system-ui, sans-serif;
+}
+@media screen and (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0f1217; --surface: #151a21; --term: #0a0d11; --ink: #e3e7ec;
+    --muted: #9ba4ae; --line: #29313b; --accent: #a9c3e6; --mark: #1a2638;
+    --high: #f2a19a; --medium: #e8bf7a; --low: #a9c3e6; --info: #b3aea4;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 1rem/1.65 var(--sans); overflow-wrap: anywhere; }
+h1, h2, h3, h4, p, dl, dd, ol { margin: 0; }
+h1, h2, h3, h4 { line-height: 1.35; }
+a { color: var(--accent); text-underline-offset: .22em; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+code, time, .mono { font-family: var(--mono); }
+.page { width: min(100% - 2rem, 72rem); margin-inline: auto; }
+.brand { display: inline-flex; align-items: center; gap: .5rem; font: bold .875rem/1.5 var(--mono); }
+.permission { padding: .05rem .35rem; border-radius: 2px; background: var(--ink); color: var(--bg); }
+.severity { font: bold .75rem/1.5 var(--mono); color: var(--severity); }
+.high { --severity: var(--high); }
+.medium { --severity: var(--medium); }
+.low { --severity: var(--low); }
+.info { --severity: var(--info); }
+.false-positive { color: var(--accent); font-weight: 700; }
+.note { color: var(--muted); font-size: .8125rem; }
+h1 { font: 800 clamp(1.75rem, 4.5vw, 3.25rem)/1.15 var(--mono); }
+h2 { font-size: 1.125rem; }
+footer { margin-top: 1.75rem; padding: .75rem 0 1.5rem; border-top: 1px solid var(--line); }
+@page { size: A4; margin: 13mm; }
+@media print {
+  body { background: var(--surface); font-size: 9pt; line-height: 1.45; }
+  .page { width: 100%; }
+  h1 { font-size: 25pt; }
+  h2, h3, h4 { break-after: avoid; }
+  p { orphans: 2; widows: 2; }
+  .permission { border: 1px solid var(--ink); background: transparent; color: var(--ink); }
+  footer { margin-top: .75rem; padding: .4rem 0 0; }
+  a { color: inherit; }
+}
+
+.mast { padding: 1rem 0; border-bottom: 1px solid var(--line); background: var(--surface); }
+.mast .page, .meta, .section-head, .labels { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem 1rem; }
+.mast .page, .section-head { justify-content: space-between; }
+.hero { padding: 2.5rem 0 1.5rem; }
+.hero p { margin-top: .6rem; }
+.meta { margin-top: .75rem; }
+.meta > div { display: flex; gap: .5rem; }
+.meta dt { color: var(--muted); flex-shrink: 0; }
+.summary { padding: .85rem 0; border-block: 1px solid var(--line); }
+.severity-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: .6rem 0; }
+.severity-counts > div { border-left: 2px solid var(--severity); padding-inline: clamp(.35rem,1.4vw,.9rem); }
+.severity-counts dd { font-size: 1.55rem; font-weight: 700; line-height: 1.25; }
+.unit { font: .6875rem var(--sans); }
+.review { display: grid; gap: 1rem; align-items: start; margin-top: 1.5rem; }
+.register, .patch { min-width: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+.section-head { padding: .75rem 1rem; }
+.files { list-style: none; padding: 0; }
+.file { padding: .65rem 1rem; border-top: 1px solid var(--line); }
+.file.featured { border-left: 2px solid var(--accent); padding-left: calc(1rem - 2px); }
+.file.excluded { background: var(--mark); }
+.file .labels { gap: .2rem .7rem; font-size: .75rem; color: var(--muted); }
+.file code.path { display: block; margin: .18rem 0; font-size: .8125rem; }
+.file .title { font-size: .8125rem; }
+.patch { scroll-margin-top: 1rem; }
+.patch header { padding: 1rem; }
+.patch h2 { margin-top: .25rem; }
+.hunk { padding: .5rem .75rem; border-block: 1px solid var(--line); background: var(--term); color: var(--accent); font-size: .8125rem; }
+.change { display: grid; grid-template-columns: 2rem minmax(0, 1fr); }
+.change > div { padding: .9rem .9rem .9rem .75rem; }
+.change + .change { border-top: 1px solid var(--line); }
+.gutter { display: grid; justify-items: center; padding-top: .9rem; border-right: 1px solid var(--line); color: var(--accent); font-weight: 700; }
+.suggestion { background: var(--mark); }
+.change p { margin-top: .3rem; font-size: .9rem; }
+@media screen and (min-width: 52rem) {
+  .review { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+}
+@media print {
+  .mast, .mast .page, .hero { padding: .3rem 0; }
+  .summary { padding: .4rem 0; }
+  .review { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); margin-top: .6rem; }
+  .file, .section-head { padding-block: .35rem; }
+  .patch header, .change > div { padding-block: .45rem; }
+  .patch, .file, .summary { break-inside: avoid; }
+}
+  </style>
+</head>
+<body>
+  <header class="mast"><div class="page"><div class="brand"><span class="permission" aria-label="読み取り専用">r--</span><span>agentic-scan</span></div><span class="note">ファイルレビュー</span></div></header>
+  <main class="page">
+    <header class="hero">
+      <h1>security-scan</h1>
+      <p>注文管理アプリ（架空のサンプル）</p>
+      <dl class="meta note"><div><dt>実行日時</dt><dd><time datetime="2026-10-06">2026-10-06</time>（日付のみ）</dd></div><div><dt>対象範囲</dt><dd>src/api/ の注文・レポート API と依存関係の記録</dd></div></dl>
+    </header>
+    <section class="summary" aria-labelledby="summary">
+      <h2 id="summary">重大度別件数</h2>
+      <dl class="severity-counts">
+          <div class="high"><dt><span class="severity high">High</span></dt><dd class="mono">2<span class="unit"> 件</span></dd></div>
+          <div class="medium"><dt><span class="severity medium">Medium</span></dt><dd class="mono">1<span class="unit"> 件</span></dd></div>
+          <div class="low"><dt><span class="severity low">Low</span></dt><dd class="mono">2<span class="unit"> 件</span></dd></div>
+          <div class="info"><dt><span class="severity info">Info</span></dt><dd class="mono">1<span class="unit"> 件</span></dd></div>
+        </dl>
+      <p class="note">誤検知 1 件は集計対象外。指摘一覧に掲載。</p>
+    </section>
+    <div class="review">
+      <section class="register" aria-labelledby="register">
+        <div class="section-head"><h2 id="register">指摘一覧</h2><span class="note">7 件</span></div>
+        <ol class="files" role="list">
+          <li class="file featured">
+            <div class="labels"><code>F-001</code><span class="severity high">High</span><code>Valid</code></div>
+            <code class="path">src/api/orders.py:42</code>
+            <p class="title"><a href="#detail">注文詳細 API に所有者の確認がない</a></p>
+          </li>
+          <li class="file">
+            <div class="labels"><code>D-001</code><span class="severity high">High</span><code>Unverified</code></div>
+            <code class="path">package-lock.json:18</code>
+            <p class="title">HTTP クライアントの報告された脆弱性が適用されるか未確認</p>
+          </li>
+          <li class="file">
+            <div class="labels"><code>F-002</code><span class="severity medium">Medium</span><code>Likely</code></div>
+            <code class="path">src/api/pagination.py:7</code>
+            <p class="title">一覧 API の取得件数に上限がない</p>
+          </li>
+          <li class="file">
+            <div class="labels"><code>F-003</code><span class="severity low">Low</span><code>Unverified</code></div>
+            <code class="path">deploy/php.ini:9</code>
+            <p class="title">デプロイ設定のデバッグ出力</p>
+          </li>
+          <li class="file excluded">
+            <div class="labels"><code>F-004</code><span class="severity high">High</span><code class="false-positive">FalsePositive</code></div>
+            <code class="path">src/api/reports.py:88</code>
+            <p class="title">レポート検索の SQL 断片（誤検知）</p>
+          </li>
+          <li class="file">
+            <div class="labels"><code>F-005</code><span class="severity low">Low</span><code>Valid</code></div>
+            <code class="path">src/api/middleware.py:23</code>
+            <p class="title">内部用の診断ヘッダーが応答に含まれる</p>
+          </li>
+          <li class="file">
+            <div class="labels"><code>F-006</code><span class="severity info">Info</span><code>Unverified</code></div>
+            <code class="path">docs/logging.md:12</code>
+            <p class="title">監査ログの保存期間が記録されていない</p>
+          </li>
+        </ol>
+      </section>
+      <article class="patch" id="detail" aria-labelledby="detail-title">
+        <header>
+          <div class="labels note"><code>F-001</code><span class="severity high">High</span><code>Valid</code></div>
+          <h2 id="detail-title">注文詳細 API に所有者の確認がない</h2>
+        </header>
+        <p class="hunk"><span aria-hidden="true">@@ </span><span class="note">該当ファイル </span><code>src/api/orders.py:42</code><span aria-hidden="true"> @@</span></p>
+        <section class="change">
+          <span class="gutter mono" aria-hidden="true">−</span>
+          <div><h3>根拠</h3><p>この架空例では、ルートは顧客ロールに公開されています。ハンドラーは主キーだけで注文を取得し、所有者による絞り込みがありません。応答には注文詳細が含まれます。</p></div>
+        </section>
+        <section class="change suggestion">
+          <span class="gutter mono" aria-hidden="true">+</span>
+          <div><h3>修正方針</h3><p>注文の取得条件にログイン中のアカウント ID を含めます。自分の注文は取得でき、他人の注文は取得できないことを回帰テストで確認します。</p></div>
+        </section>
+      </article>
+    </div>
+    <footer class="note">出典 <code>security-scan/examples/findings.sample.ja.json</code> · デモ用データ</footer>
+  </main>
+</body>
+</html>

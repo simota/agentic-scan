@@ -707,6 +707,27 @@ DASH = {
         "key_move": "Next / previous finding", "key_toggle": "Show or hide details",
         "footer": "Rendered from findings.json; every value is shown as recorded. Inspect this "
                   "dashboard before sharing.",
+        # console-triage layer (report_assets/console.css, console.js). Lanes follow
+        # action(); CLOSED and EXCLUDED hold the records the priority queue leaves out.
+        "cx_readout": "Record status", "cx_readout_open": "open", "cx_readout_closed": "closed",
+        "cx_readout_excluded": "excluded",
+        "cx_severity_h": "Severity", "cx_severity_note": "{n} included records; {x} excluded are not counted",
+        "cx_tile_sub": "open {open} · closed {closed}", "cx_legend_cell": "1 cell = 1 record.",
+        "cx_legend_open": "open", "cx_legend_closed": "fixed or accepted",
+        "cx_verdict_h": "Verdict", "cx_verdict_note": "all {n} records; excluded verdicts kept as their own block",
+        "cx_perspective_h": "Perspectives", "cx_perspective_note": "{n} perspectives",
+        "cx_perspectives_empty": "No perspectives recorded.",
+        "cx_board_h": "Triage", "cx_board_note": "every record in one lane; pick a card to inspect it",
+        "cx_lane_empty": "None", "cx_inspector_h": "Inspector", "cx_inspector_empty": "No records to inspect.",
+        "cx_copy": "Copy for Issue / LLM", "cx_open_record": "Open in register",
+        "cx_where_h": "Where", "cx_evidence_h": "Evidence", "cx_evidence_method": "method: {method}",
+        "cx_fix_h": "Fix direction", "cx_empty_records": "No records.", "cx_read_only": "read-only",
+        "cx_lane_fix_now": "PLAN THE FIX", "cx_lane_verify_first": "VERIFY FIRST",
+        "cx_lane_closed": "CLOSED", "cx_lane_excluded": "EXCLUDED",
+        "cx_lane_note_fix_now": "Open; Valid and Confirmed.",
+        "cx_lane_note_verify_first": "Open; the verdict or the confidence is not yet definitive.",
+        "cx_lane_note_closed": "Fix recorded or risk accepted.",
+        "cx_lane_note_excluded": "False positive or not applicable; kept with the justification.",
     },
     "ja": {
         "eyebrow": "ARCHITECTURE REVIEW",
@@ -768,6 +789,25 @@ DASH = {
         "key_move": "次・前の検出事項", "key_toggle": "詳細の表示・非表示",
         "footer": "findings.json から生成しています。値はすべて記録どおりに表示しています。共有前に内容を"
                   "確認してください。",
+        "cx_readout": "対応状況", "cx_readout_open": "open", "cx_readout_closed": "closed",
+        "cx_readout_excluded": "excluded",
+        "cx_severity_h": "Severity", "cx_severity_note": "集計対象 {n} 件（除外 {x} 件は数えない）",
+        "cx_tile_sub": "未解決 {open} · 対応済 {closed}", "cx_legend_cell": "1 マス = 1 件。",
+        "cx_legend_open": "未解決", "cx_legend_closed": "対応済み（Fixed / Accepted）",
+        "cx_verdict_h": "Verdict", "cx_verdict_note": "記録 {n} 件の判定。除外の判定は独立した区画",
+        "cx_perspective_h": "Perspectives", "cx_perspective_note": "観点 {n}",
+        "cx_perspectives_empty": "観点の記録がありません。",
+        "cx_board_h": "Triage", "cx_board_note": "全件をいずれかのレーンに置いています。カードを選ぶと詳細を表示します",
+        "cx_lane_empty": "該当なし", "cx_inspector_h": "Inspector", "cx_inspector_empty": "表示できる記録がありません。",
+        "cx_copy": "Issue / LLM 用にコピー", "cx_open_record": "一覧で開く",
+        "cx_where_h": "該当箇所", "cx_evidence_h": "根拠", "cx_evidence_method": "method: {method}",
+        "cx_fix_h": "修正方針", "cx_empty_records": "記録がありません。", "cx_read_only": "read-only",
+        "cx_lane_fix_now": "PLAN THE FIX / 修正を計画", "cx_lane_verify_first": "VERIFY FIRST / 先に検証",
+        "cx_lane_closed": "CLOSED / 対応済・受容", "cx_lane_excluded": "EXCLUDED / 誤検知・除外",
+        "cx_lane_note_fix_now": "未対応で、Valid かつ Confirmed の検出事項",
+        "cx_lane_note_verify_first": "未対応で、検証判定または確度が確定していない検出事項",
+        "cx_lane_note_closed": "修正の申告（Fixed）または受容（Accepted）",
+        "cx_lane_note_excluded": "誤検知・対象外として根拠つきで保持",
     },
 }
 
@@ -861,9 +901,11 @@ table.rules td,table.coverage-table td{overflow-wrap:anywhere}
 .arch-text li,.arch-changes li{overflow-wrap:anywhere}
 @media print{.arch-scroll{overflow:visible;border:0}.arch-svg{max-width:100%;height:auto}.arch-figure{break-inside:avoid}.filters-panel,.copy-finding,.toggle-label{display:none!important}.priority-item{break-inside:avoid}.finding{display:block!important}}
 """
-CSS = report_style.dashboard_css() + DASHBOARD_CSS
+# The console-triage layer comes last in both: its stylesheet maps the kit's tokens to the brand,
+# and its renderer (window.AgenticConsole) opens the one page script, so the CSP keeps one hash each.
+CSS = report_style.dashboard_css() + DASHBOARD_CSS + report_style.console_css()
 
-JS = """
+JS = report_style.console_js() + """
 (function(){
 'use strict';
 var root=document.documentElement,L=JSON.parse(document.getElementById('labels').textContent);
@@ -912,6 +954,9 @@ var navLinks=Array.prototype.slice.call(byId('nav').querySelectorAll('a[href^="#
 // Printing shows and opens every finding, then restores the filtered view.
 var shut=[];addEventListener('beforeprint',function(){shut=[];items.forEach(function(f){var d=f.querySelector('details');if(!d.open)shut.push(d);f.hidden=false;d.open=true;});if(m)m.hidden=true;});
 addEventListener('afterprint',function(){shut.forEach(function(d){d.open=false;});if(list)show();});
+// Console layer: severity tiles, verdict strip, perspective lamps, triage board and inspector;
+// its copy button reuses the register's Markdown for the finding.
+window.AgenticConsole.mount(JSON.parse(byId('console-data').textContent),{root:document,copy:function(f){return copyText(COPY[f.id]);}});
 })();
 """
 
@@ -1004,6 +1049,141 @@ def finding_markdown(f, lang):
         out += [f"- {one(r['title']) + ' — ' if reference_title(r) not in (None, r['url']) else ''}"
                 f"{one(r['url'])}" for r in refs]
     return "\n".join(out) + "\n"
+
+
+def overview_headline(doc, lang, status):
+    """The one-line state of the open findings, shown in the band and the summary banner."""
+    d = DASH[lang]
+    included = [f for f in doc.get("findings", []) if not is_excluded(f)]
+    open_ = [f for f in included if status[f["id"]] == "Open"]
+    open_hm = sum(f["severity"] in ("High", "Medium") for f in open_)
+    if not included:
+        return d["no_findings"]
+    if open_hm:
+        return plural(d, "risk_summary", open_hm)
+    if open_:
+        return plural(d, "open_summary", len(open_))
+    return d["no_open"]
+
+
+# console-triage layer (artifacts/report-style/console/INTEGRATION.md at the repository root).
+CONSOLE_LANES = ("fix_now", "verify_first", "closed", "excluded")
+CONSOLE_OPEN = ("fix_now", "verify_first")
+LANE_TONES = {"fix_now": "high", "verify_first": "medium", "closed": "low", "excluded": "accent"}
+VERDICT_TONES = {"Valid": "strong", "Likely": "mid", "Unverified": "hatch", "Unlikely": "weak"}
+SEVERITY_TONES = {"High": "high", "Medium": "medium", "Low": "low", "Info": "info"}
+
+
+def console_lane(f, status):
+    """The lane of one record: an excluded verdict, then a closed status, then action()."""
+    if is_excluded(f):
+        return "excluded"
+    if status != "Open":
+        return "closed"
+    return action(f)
+
+
+def _shown(value):
+    """Every recorded string as as_text() shows it, so no bidi control reaches the page."""
+    if isinstance(value, dict):
+        return {k: _shown(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_shown(v) for v in value]
+    return as_text(value) if isinstance(value, str) else value
+
+
+def console_model(doc, lang):
+    """The normalized console model drawn by console.js; built only from the record and action()."""
+    t, d = LABELS[lang], DASH[lang]
+    meta, records = doc["meta"], doc.get("findings", [])
+    status = {f["id"]: f.get("status", "Open") for f in records}
+    lanes, findings = {}, []
+    for f in records:
+        lane = lanes[f["id"]] = console_lane(f, status[f["id"]])
+        v = f["validation"]
+        notes = [d["excluded_note"]] if lane == "excluded" else []
+        if "analysis" in f:
+            a = f["analysis"]
+            notes.append(f"{t['analysis']}: {a['result']} — {a['tool']}: {a['command']}")
+        findings.append({
+            "id": f["id"], "severity": f["severity"], "status": status[f["id"]],
+            "status_label": t["excluded"] if lane == "excluded" else status[f["id"]],
+            "verdict": v["verdict"], "title": f["title"], "location": ", ".join(as_locations(f["location"])),
+            "lane": lane, "open": lane in CONSOLE_OPEN, "excluded": lane == "excluded", "anchor": anchor(f),
+            "tags": [f["category"], f["confidence"]],
+            "where": [{"label": t[key], "value": as_text(value) if filled({key: value}, key) else "",
+                       **({"mono": True} if key == "location" else {})}
+                      for key, value in (("location", ", ".join(as_locations(f["location"]))),
+                                         ("category", category(f)), ("rule", f.get("rule", "")),
+                                         ("blast_radius", f.get("blast_radius", "")))],
+            "evidence": {"text": v.get("evidence", "") if filled(v, "evidence") else "",
+                         "method": v["method"], "notes": notes},
+            "fix": f["fix"] if filled(f, "fix") else "",
+            "guidance": d[lane + "_note"] if lane in CONSOLE_OPEN else "",
+        })
+    perspectives = []
+    for name, p in perspective_rows(doc, lang):
+        matched = [f for f in records if f["category"] == name]
+        opened = [f for f in matched if lanes[f["id"]] in CONSOLE_OPEN]
+        if opened:
+            tone = SEVERITY_TONES[min((f["severity"] for f in opened), key=SEVERITIES.index)]
+        elif any(lanes[f["id"]] == "closed" for f in matched):
+            tone = "ink"
+        else:
+            tone = "accent" if matched else "muted"
+        perspectives.append({"name": name, "result": p["status"], "note": p["note"], "tone": tone,
+                             "on": bool(opened)})
+    labels = {key[3:]: value for key, value in d.items() if key.startswith("cx_")}
+    labels.update(copied=d["copied"], copy_failed=d["copy_failed"], fix_missing=d["missing_fix"],
+                  evidence_missing=t["not_recorded"], not_recorded=t["not_recorded"], location=t["location"])
+    included = [f for f in records if lanes[f["id"]] != "excluded"]
+    return _shown({
+        "meta": {"skill": "architecture-scan", "title": meta.get("project", ""), "title_id": "cx-title",
+                 "context": [meta.get("date", ""), revision(meta), meta.get("scope", ""), d["cx_read_only"]],
+                 "headline": overview_headline(doc, lang, status)},
+        "counts": {"open": sum(lanes[f["id"]] in CONSOLE_OPEN for f in included),
+                   "closed": sum(lanes[f["id"]] == "closed" for f in included),
+                   "excluded": len(records) - len(included), "total": len(records)},
+        "severities": list(SEVERITIES),
+        "verdicts": [{"key": v, "label": v, "excluded": v in EXCLUDED,
+                      **({"tone": VERDICT_TONES[v]} if v in VERDICT_TONES else {})} for v in VERDICTS],
+        "lanes": [{"key": key, "label": d["cx_lane_" + key], "note": d["cx_lane_note_" + key],
+                   "tone": LANE_TONES[key]} for key in CONSOLE_LANES],
+        "perspectives": perspectives,
+        "findings": findings,
+        "labels": labels,
+    })
+
+
+def console_band_html(cm, tools):
+    """The band header, drawn here so it reads without the script: wordmark, skill, the page's
+    one h1 (the project), context, the headline and the open / closed / excluded readout."""
+    meta, counts, L, e = cm["meta"], cm["counts"], cm["labels"], html_text
+    context = "".join(f"<span>{e(part)}</span>" for part in meta["context"] if visible(part))
+    readout = "".join(f"<div><dt>{e(L['readout_' + key])}</dt><dd>{counts[key]}</dd></div>"
+                      for key in ("open", "closed", "excluded"))
+    return (f"<header class='cx-band'><div class='cx-band-in'><div>"
+            f"<p class='cx-wm'><span><span class='cx-perm' aria-hidden='true'>r--</span> agentic-scan</span>"
+            f"<span class='cx-skill'>{e(meta['skill'])}</span></p>"
+            f"<h1 id='{meta['title_id']}'>{e(meta['title'])}</h1>"
+            + (f"<p class='cx-ctx'>{context}</p>" if context else "")
+            + (f"<p class='cx-headline'>{e(meta['headline'])}</p>" if meta["headline"] else "")
+            + f"</div><div class='cx-side'><dl class='cx-readout' aria-label='{escape(L['readout'])}' "
+            f"data-cx-readout>{readout}</dl><div class='cx-tools'>{tools}</div></div></div></header>")
+
+
+def console_html(lang):
+    """The console slots console.js fills; shown with the script, like the filters and facets."""
+    e, d = html_text, DASH[lang]
+    return ("<div class='cx' id='console' data-js hidden><div class='cx-grid'>"
+            "<section class='cx-p cx-sev' data-cx='severity' aria-labelledby='cx-sev-h'></section>"
+            "<section class='cx-p cx-ver' data-cx='verdicts' aria-labelledby='cx-ver-h'></section>"
+            "<section class='cx-p cx-cov' data-cx='perspectives' aria-labelledby='cx-cov-h'></section>"
+            "<section class='cx-triage' id='triage' tabindex='-1' aria-labelledby='cx-triage-h'>"
+            f"<h2 class='cx-ph' id='cx-triage-h'><b>{e(d['cx_board_h'])}</b><span>{e(d['cx_board_note'])}</span></h2>"
+            "<div class='cx-triage-in'><div class='cx-board' data-cx='board'></div>"
+            "<aside class='cx-insp' data-cx='inspector' aria-live='polite'></aside></div></section>"
+            "</div></div>")
 
 
 def bars(order, counter, colored=False):
@@ -1419,15 +1599,18 @@ def html_architecture(doc, lang):
 def html_sidebar(doc, lang, by_sev):
     """Contents links, then, with findings, the severity facets and keys that act on the register."""
     t, d, e = LABELS[lang], DASH[lang], html_text
-    nav = [("overview", d["nav_summary"]), ("priority-section", d["priority"]),
+    # The triage board and the register lead, as they lead the page; the board is drawn by
+    # the script, so its link appears with it.
+    nav = [("triage", d["cx_board_h"]), ("findings", d["findings_register"]),
+           ("overview", d["nav_summary"]), ("priority-section", d["priority"]),
            ("decisions-section", t["decisions"]), ("coverage", d["nav_coverage"]),
            ("levels", t["levels"])]
     nav += [("rules-section", t["rules"])] if doc.get("rules") else []
-    nav += [("findings", d["findings_register"]), ("architecture", d["nav_architecture"]),
-            ("lists", d["nav_lists"])]
+    nav += [("architecture", d["nav_architecture"]), ("lists", d["nav_lists"])]
     sidebar = [f"<nav class='sidebar' id='nav' aria-label='{escape(d['contents'])}'>"
                f"<h2 class='nav-title'>{e(d['contents'])}</h2><ol class='nav-links'>"
-               + "".join(f"<li><a href=\"#{i}\">{e(label)}</a></li>" for i, label in nav) + "</ol>"]
+               + "".join(f"<li{' data-js hidden' if i == 'triage' else ''}><a href=\"#{i}\">{e(label)}</a></li>"
+                         for i, label in nav) + "</ol>"]
     if doc.get("findings", []):
         # Facets and keys act on the register through the script, so they appear with it.
         sidebar.append(f"<div class='facets' data-js hidden><h2 class='nav-title'>{e(d['severity'])}</h2>"
@@ -1454,19 +1637,12 @@ def html_overview(doc, lang, status, by_sev, excluded):
     note = "report_note_method" if visible(as_text(meta.get("method", ""))) else "report_note"
     out = ["<section id='overview' tabindex='-1' aria-labelledby='h'>",
            f"<div class='hero'><div><div class='eyebrow'>{e(t['title'])}</div>"
-           f"<h1 id='h'>{e(meta.get('project', ''))}</h1>"
+           f"<h2 id='h'>{e(d['nav_summary'])}</h2>"
            f"<div class='meta'>{e(meta.get('scope', ''))} · {e(revision(meta))} · "
            f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</div></div>"
            f"<div class='hero-aside'>{e(d[note])}</div></div>"]
 
-    if not included:
-        headline = d["no_findings"]
-    elif open_hm:
-        headline = plural(d, "risk_summary", open_hm)
-    elif open_:
-        headline = plural(d, "open_summary", len(open_))
-    else:
-        headline = d["no_open"]
+    headline = overview_headline(doc, lang, status)
     detail = plural(d, "unverified_line", pending) if pending else d["none_unverified_line"]
     out.append(f"<div class='summary-banner'><strong>{e(headline)}</strong>"
                f"<p>{e(detail if included else review_method(doc, lang))}</p></div>")
@@ -1733,6 +1909,7 @@ def render_html(doc, lang):
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
     status = {f["id"]: f.get("status", "Open") for f in findings}
+    cm = console_model(doc, lang)
 
     out = [f"<!doctype html><html lang='{lang}' class='app-shell'><head><meta charset='utf-8'>",
            f"<meta http-equiv='Content-Security-Policy' content=\"{CSP}\">",
@@ -1740,11 +1917,11 @@ def render_html(doc, lang):
            f"<title>{escape(t['title'])}: {escape(' '.join(as_text(meta.get('project', '')).split()))}</title>"
            f"<style>{CSS}</style></head><body>",
            f"<a class='skip' href=\"#findings\">{e(d['jump_findings'])}</a>",
-           f"<header class='appbar'><div class='appbar-in'><span class='brand'><span>{e(d['eyebrow'])}</span>"
-           f"<span class='appbar-project'>{e(meta.get('project', ''))}</span></span><div class='tools'>"
-           f"<a class='button' href=\"report.md\">{e(d['report_link'])}</a>"
-           f"<button type='button' id='theme' data-js hidden>{e(d['theme'])}</button></div></div></header>",
+           console_band_html(cm, f"<a class='button' href=\"report.md\">{e(d['report_link'])}</a>"
+                             f"<button type='button' id='theme' data-js hidden>{e(d['theme'])}</button>"),
+           console_html(lang),
            "<div class='shell'>", *html_sidebar(doc, lang, by_sev), "<main>"]
+    out += html_register(doc, lang, status)
     out += html_overview(doc, lang, status, by_sev, excluded)
     out += html_priority(doc, lang, status)
     out.append(f"<section class='panel' id='decisions-section' tabindex='-1'><h2>{e(t['decisions'])}</h2>"
@@ -1754,8 +1931,7 @@ def render_html(doc, lang):
     out += html_levels(doc, lang)
     out += html_rules(doc, lang)
     out += html_charts(doc, lang, status, by_sev)
-    out += html_register(doc, lang, status)
-    # After the register: the after diagram is where the fix directions lead.
+    # Last of the sections: the after diagram is where the fix directions lead.
     out.append(html_architecture(doc, lang))
 
     out.append("<div class='lists' id='lists' tabindex='-1'>" + "".join(
@@ -1766,6 +1942,7 @@ def render_html(doc, lang):
     copy = {f["id"]: finding_markdown(f, lang) for f in findings}
     out.append(f"<script type='application/json' id='labels'>{json_data(labels)}</script>"
                f"<script type='application/json' id='copy-data'>{json_data(copy)}</script>"
+               f"<script type='application/json' id='console-data'>{json_data(cm)}</script>"
                f"<script>{JS}</script></body></html>")
     return "".join(out)
 

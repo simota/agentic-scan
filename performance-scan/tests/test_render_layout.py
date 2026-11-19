@@ -79,9 +79,9 @@ class AppShellTests(unittest.TestCase):
             with self.subTest(budgets=bool(budgets)):
                 root = HtmlTreeReader(render.render_html(doc, "en")).root
                 self.assertEqual(root.find("html").get("class"), "app-shell")
-                self.assertIsNotNone(root.find(".//header[@class='appbar']"))
+                self.assertIsNotNone(root.find(".//header[@class='cx-band']"))
                 targets = [a.get("href")[1:] for a in root.findall(".//nav[@id='nav']//a")]
-                expected = ["overview", "findings"] + (["budgets"] if budgets else []) + ["coverage", "lists"]
+                expected = ["triage", "findings", "overview"] + (["budgets"] if budgets else []) + ["coverage", "lists"]
                 self.assertEqual(targets, expected)
                 for target in targets:
                     self.assertIsNotNone(root.find(f".//*[@id='{target}']"), target)

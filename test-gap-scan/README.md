@@ -64,9 +64,12 @@ python3 skills/test-gap-scan/scripts/findings.py check out --repo /path/to/asses
 python3 skills/test-gap-scan/scripts/findings.py counts out/findings.json    # n_* summary counts
 ```
 
-`findings.py check` enforces the run contract: exactly `findings.json`,
-`dashboard.html` and `report.md`; gapless `F-NNN` IDs in severity, then path
-order; every perspective recorded; High and Medium findings traced, with
+`render.py` writes the console-triage dashboard, `assessment.html` and `report.md`.
+Open `assessment.html` and print from the browser to save as PDF.
+
+`findings.py check` checks `findings.json`, `dashboard.html` and `report.md`,
+plus `assessment.html` when present. The run contract also requires gapless
+`F-NNN` IDs in severity, then path order; every perspective recorded; High and Medium findings traced, with
 exposure, the tests today, the outcomes to assert and steps; a coverage
 record consistent with itself and with testability (a `Restructure` finding
 names what blocks the test); every step saying how it is verified;
@@ -102,7 +105,7 @@ skills/test-gap-scan/
   reference/findings-schema.md findings.json shape, merge semantics, what check enforces
   reference/report.md          checklist and findings report formats
   scripts/findings.py          merges fragments; renumbers; checks the run contract (stdlib only)
-  scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
+  scripts/render.py            findings.json -> dashboard.html / assessment.html / report.md (stdlib only)
   scripts/recon.py             git history for RECON: window, hotspots, fixes (stdlib only)
   scripts/markdown_safe.py     escapes recorded text for Markdown (stdlib only)
   scripts/drafts.py            findings.json -> plan.md and one issue per finding (stdlib only)

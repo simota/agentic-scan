@@ -51,9 +51,9 @@ class UntrustedTextTests(unittest.TestCase):
                 self.assertIsNone(render.link_destination(url))
                 doc = complete_doc()
                 doc["findings"][0]["references"] = [{"title": "Share", "url": url}]
-                # Only the in-page contents links remain.
+                # Apart from the printable assessment, all links stay on the page.
                 links = re.findall(r"href=['\"]([^'\"]*)", render.render_html(doc, "en"))
-                self.assertEqual([href for href in links if not href.startswith("#")], [])
+                self.assertEqual([href for href in links if not href.startswith("#")], ["assessment.html"])
                 self.assertNotIn("](<", render.render_markdown(doc, "en"))
         self.assertEqual(render.link_destination("docs/notes.md#x"), "docs/notes.md#x")
 

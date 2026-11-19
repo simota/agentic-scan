@@ -198,8 +198,12 @@ class ReportOutputTests(unittest.TestCase):
         dashboard, assessment = self.output(data)
         self.assertEqual([item["finding"]["id"] for item in self.payload(dashboard)["report"]["queue"]],
                          expected)
-        self.assertEqual([a.text() for a in assessment.find(id="priority-queue").find_all("a")],
-                         expected)
+        # The assessment shows the same queue as two lanes: FIX NOW, then VERIFY FIRST,
+        # each keeping the queue's severity-then-ID order.
+        lanes = {item["finding"]["id"]: item["action"] for item in model["queue"]}
+        by_lane = ([i for i in expected if lanes[i] == "fix_now"] + [i for i in expected if lanes[i] == "verify_first"])
+        self.assertEqual([a.text() for a in assessment.find(id="priority-queue").find_all("a")], by_lane)
+        self.assertEqual(by_lane, ["Z-fix", "M-fix", "L-fix", "A-verify", "B-verify", "M-verify"])
 
     def test_excluded_records_do_not_inflate_included_counts_or_queue(self):
         data = self.mixed_report()
@@ -255,9 +259,11 @@ class ReportOutputTests(unittest.TestCase):
                     for key, number in counts.items():
                         self.assertEqual(int(row.find(**{"data-part-count": key}).text()), number, (part, key))
                 # Each part's heading precedes only its own findings in the queue, register and details.
-                for section in ("priority-queue", "finding-register", "finding-details"):
+                # In the queue, part headings sit inside each lane (both open findings here verify first).
+                for section, heading in (("lane-verify_first", "priority-queue-verify_first"),
+                                         ("finding-register", "finding-register"), ("finding-details", "finding-details")):
                     text = assessment.find(id=section).text()
-                    code, deps = (assessment.find(id=f"{section}-{part}").text() for part in ("code", "deps"))
+                    code, deps = (assessment.find(id=f"{heading}-{part}").text() for part in ("code", "deps"))
                     self.assertLess(text.index(code), text.index("F-001"), section)
                     self.assertLess(text.index("F-001"), text.index(deps), section)
                     self.assertLess(text.index(deps), text.index("D-001"), section)

@@ -29,6 +29,16 @@ and listings, colour only for severity. It lives in
 - The PDF engine is the kit's (`PROMPT_SCAN_PDF_TIMEOUT` overrides its
   timeout); engine stderr is masked with `excerpt.mask` (`skills/prompt-scan/scripts/excerpt.py`)
   before it is reported.
+- The console-triage layer (2026-11-19) is inlined last into both pages:
+  `skills/prompt-scan/scripts/report_assets/console.css` (brand tokens, band
+  header, severity tiles, verdict strip, perspective lamps, four-lane board,
+  inspector) and, in `dashboard.html` only,
+  `skills/prompt-scan/scripts/report_assets/console.js`, which draws the
+  `console` model built by `console_model()` in `render.py`. Lanes come from
+  `dashboard_model()`'s `action()` (FIX NOW / VERIFY FIRST) plus closed
+  statuses and excluded verdicts; `report.html` prints the same four lanes
+  top to bottom. These two asset files are copies of the shared
+  `console.css` and `console.js` under `artifacts/report-style/console/`.
 
 ## Readers
 

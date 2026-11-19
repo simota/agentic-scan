@@ -36,3 +36,11 @@ def dashboard_css():
 def dashboard_js():
     """Runtime for the common-format dashboard built by report.render_dashboard."""
     return _asset("dashboard.js")
+
+
+def console_css():
+    return _asset("console.css")
+
+
+def console_js():
+    return _asset("console.js")

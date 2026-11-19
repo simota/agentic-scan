@@ -1,8 +1,8 @@
 """The app shell of the pages render.py writes beside the dashboard.
 
 evidence.html and mockups.html share the dashboard's look (the bundled report
-kit's dashboard CSS), its app bar and its theme toggle, and the dashboard links to
-each of them from its app bar. One shell keeps those pages and links alike.
+kit's dashboard CSS), an app bar and the theme toggle, and the dashboard links to
+each of them from the tools in its console band. One shell keeps those pages alike.
 Standard library only.
 """
 
@@ -10,15 +10,7 @@ import html
 
 import report_style as style
 
-DASHBOARD_REPORT_LINK = '<a class="button" href="report.html" data-l="report_link"></a>'
-# The dashboard's app bar is one 56px row, and with these links its tools no longer
-# fit at a phone's width: the theme toggle ran off screen and the page scrolled
-# sideways. Up to the kit's own phone breakpoint the tools wrap onto a second row
-# of a taller bar; --appbar-h also sets every sticky offset below the bar. The
-# tools leave room for the kit's 10px gap after the brand, which shrinks to nothing.
-NARROW_TOOLBAR_CSS = ("@media(max-width:480px){html.app-shell{--appbar-h:80px}"
-                      ".app-shell .appbar .tools{flex-wrap:wrap;justify-content:flex-end;row-gap:6px;"
-                      "max-width:calc(100% - 10px)}}")
+DASHBOARD_REPORT_LINK = '<a class="button" href="report.html" data-l="cx_report_link"></a>'
 THEME_JS = """
 (function () {
   'use strict';
@@ -73,12 +65,14 @@ def page(*, lang, title, policy, css, chrome, project, dashboard, body, script="
 
 
 def link_dashboard(page, links):
-    """The dashboard with links to the pages in links ((href, label) pairs) after its report link."""
+    """The dashboard with links to the pages in links ((href, label) pairs) after its report link.
+
+    The band's tools (console.css .cx-tools) wrap at a phone's width on their own,
+    so the dashboard needs no extra rule and sticky offsets stay at the band's 0.
+    """
     if not links:
         return page
-    if page.count(DASHBOARD_REPORT_LINK) != 1 or "</head>" not in page:
+    if page.count(DASHBOARD_REPORT_LINK) != 1:
         raise RuntimeError("dashboard template changed: cannot place the links to its companion pages")
     anchors = "".join(f'<a class="button" href="{esc(href)}">{esc(label)}</a>' for href, label in links)
-    page = page.replace(DASHBOARD_REPORT_LINK, DASHBOARD_REPORT_LINK + anchors, 1)
-    # The first </head> closes the head: record text comes later, in the body.
-    return page.replace("</head>", f"<style>{NARROW_TOOLBAR_CSS}</style></head>", 1)
+    return page.replace(DASHBOARD_REPORT_LINK, DASHBOARD_REPORT_LINK + anchors, 1)

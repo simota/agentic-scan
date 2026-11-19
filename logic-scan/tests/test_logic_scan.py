@@ -780,8 +780,8 @@ class BrowserTest(unittest.TestCase):
         self.assertIn("2", out["filtered"]["count"])
 
     def test_a_reached_finding_is_not_under_the_pinned_bars(self):
-        # From 1100px the app bar, the filter bar and the column heads stay
-        # pinned; a finding reached by its link or by `k` shows its summary row
+        # From 1100px the filter bar and the column heads stay pinned (the band
+        # scrolls away); a finding reached by its link or by `k` shows its summary row
         # (ID, severity, verdict) below them, however tall the filters wrap.
         for lang in ("en", "ja"):
             for width in (1100, 1280, 1600):
@@ -802,7 +802,7 @@ class BrowserTest(unittest.TestCase):
 
     def test_without_javascript_the_column_heads_pin_under_the_app_bar(self):
         # The filter bar needs the script, so without it nothing sits between
-        # the app bar and the pinned column heads for findings to show through.
+        # the top of the view (the band scrolls away) and the pinned column heads.
         with tempfile.TemporaryDirectory() as tmp:
             page = Path(tmp) / "dashboard.html"
             page.write_text(render.render_html(sample(), "en"), encoding="utf-8")
@@ -829,7 +829,7 @@ const [file, width] = process.argv.slice(1);
     const a = document.activeElement, f = a.closest('.finding');
     return { focus: f ? f.id : null,
              top: Math.round(document.querySelector('#finding-f-003 summary').getBoundingClientRect().top),
-             pinned: Math.round(Math.max(bottom('.appbar'), bottom('.filters-panel'), bottom('.reg-head'))) };
+             pinned: Math.round(Math.max(bottom('.cx-band'), bottom('.filters-panel'), bottom('.reg-head'))) };
   });
   await page.goto('file://' + file + '#finding-f-003', { waitUntil: 'load' });
   await page.waitForTimeout(1000);  // the kit scrolls smoothly
@@ -847,8 +847,8 @@ const [file, width] = process.argv.slice(1);
 })().catch(e => { console.log(JSON.stringify({ crash: String(e) })); process.exit(1); });
 """
 
-# With scripts off, scrolled into the register: where the app bar ends and the
-# pinned column heads start.
+# With scripts off, scrolled into the register: where the band ends (0 once it
+# has scrolled away) and the pinned column heads start.
 BROWSER_NO_SCRIPT = r"""
 const { chromium } = require('playwright');
 const [file] = process.argv.slice(1);
@@ -860,7 +860,7 @@ const [file] = process.argv.slice(1);
   await page.goto('file://' + file + '#finding-f-004', { waitUntil: 'load' });
   await page.waitForTimeout(1000);
   console.log(JSON.stringify(await page.evaluate(() => ({
-    appbar: Math.round(document.querySelector('.appbar').getBoundingClientRect().bottom),
+    appbar: Math.round(Math.max(0, document.querySelector('.cx-band').getBoundingClientRect().bottom)),
     head: Math.round(document.querySelector('.reg-head').getBoundingClientRect().top) }))));
   await browser.close();
 })().catch(e => { console.log(JSON.stringify({ crash: String(e) })); process.exit(1); });
@@ -1587,9 +1587,11 @@ class DashboardContentTest(unittest.TestCase):
     def test_contents_links_resolve_to_sections(self):
         doc = sample()
         html = self.html(doc)
-        links = re.findall(r"<li><a href=\"#([a-z-]+)\">", html.split("</nav>")[0])
-        self.assertEqual(links, ["overview", "priority-section", "decisions-section", "coverage",
-                                 "levels", "plan", "rules", "charts", "findings", "lists"])
+        links = re.findall(r"<li(?: data-js hidden)?><a href=\"#([a-z-]+)\">", html.split("</nav>")[0])
+        self.assertEqual(links, ["triage", "findings", "overview", "priority-section", "decisions-section",
+                                 "coverage", "levels", "plan", "rules", "charts", "lists"])
+        # The triage board is drawn by the script, so its link shows only with it.
+        self.assertIn("<li data-js hidden><a href=\"#triage\">", html)
         for target in links:
             self.assertEqual(html.count(f"id='{target}'"), 1, target)
         doc["conventions"] = []
@@ -1899,9 +1901,11 @@ class JapaneseWordingTest(unittest.TestCase):
         html = render.render_html(sample(), "ja")
         self.assertIn("<span class='l'>未対応の <span lang='en'>High</span>", html)
 
-    def test_the_brand_is_marked_english(self):
+    def test_the_band_readout_is_marked_english(self):
+        # The band replaced the app bar; its readout names stay English on the Japanese page.
         html = render.render_html(sample(), "ja")
-        self.assertIn("<span class='brand'><span lang='en'>LOGIC CORRECTNESS REVIEW</span>", html)
+        self.assertIn("<span class='cx-skill'>logic-scan</span>", html)
+        self.assertIn("<dt lang='en'>open</dt>", html)
 
     def test_latin_words_are_spaced_from_japanese(self):
         # "・" joins listed English values and is the one exception.

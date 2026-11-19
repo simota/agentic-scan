@@ -43,7 +43,8 @@ one `name=value` per line, counted as report.md counts them (excluded
 verdicts apart).
 
 `check` is the run contract: the output directory holds exactly
-`findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
+`findings.json`, `dashboard.html`, `report.md` and, when present, `assessment.html`
+(plus `--allow` names), the
 record is complete, IDs are gapless in severity, then path order with excluded
 verdicts last (the order `renumber` gives), every perspective in
 `reference/perspectives.md` is recorded, every cited convention exists and every
@@ -149,6 +150,8 @@ HISTORY = re.compile(r"(?<![0-9A-Za-z])(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a
 # A step says how it is checked: `verify: tests/test_pricing.py green`.
 VERIFY = re.compile(r"(?i)\bverify:")
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
+# Older run directories may predate the printable assessment.
+ASSESSMENT = "assessment.html"
 TEMPORARY = re.compile(r"\.findings-[0-9a-f]{32}\.tmp")
 # ASCII digits only: `\d` would also accept other scripts' digits.
 FINDING_ID = re.compile(r"F-[0-9]{3}")
@@ -1229,18 +1232,18 @@ def _contract(out, allow):
     problems = []
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
-    for name in sorted(present - OUTPUTS - set(allow)):
+    for name in sorted(present - OUTPUTS - {ASSESSMENT} - set(allow)):
         if TEMPORARY.fullmatch(name):
             problems.append(f"unexpected output: {name} is a temporary file from an interrupted "
                             "write; delete it once no merge or render is running")
         else:
             problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
-    not_files = {name for name in OUTPUTS & present if not (out / name).is_file()}
+    not_files = {name for name in (OUTPUTS | {ASSESSMENT}) & present if not (out / name).is_file()}
     for name in sorted(not_files):
         problems.append(f"output is not a file: {name}")
     # Writes follow a link, so a planted one sends the rendered files elsewhere;
     # a findings.json link is kept by design (_stage).
-    for name in sorted({"dashboard.html", "report.md"} & present):
+    for name in sorted({"dashboard.html", "report.md", ASSESSMENT} & present):
         if (out / name).is_symlink():
             problems.append(f"output is a symlink: {name}; the outputs are plain files in a "
                             "new directory")
@@ -1378,13 +1381,13 @@ def _contract(out, allow):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):
         problems.append("checked_ok: list what was examined and judged adequately tested")
-    return problems + _stale_outputs(out, doc, not_files | (OUTPUTS - present)), doc
+    return problems + _stale_outputs(out, doc, not_files | ((OUTPUTS | {ASSESSMENT}) - present)), doc
 
 
 def _stale_outputs(out, doc, unusable):
     """Name each output that render.py would not produce from doc in meta.lang."""
-    names = ("report.md", "dashboard.html")
-    if any(name in unusable for name in names):
+    names = [name for name in ("report.md", "dashboard.html", ASSESSMENT) if name not in unusable]
+    if not names:
         return []
     try:
         current = {name: (out / name).read_bytes() for name in names}

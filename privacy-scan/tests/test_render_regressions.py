@@ -61,7 +61,7 @@ class ReportRenderingTests(unittest.TestCase):
             with self.subTest(lang=lang):
                 outputs = self.render_outputs(doc, lang)
                 markdown_overview = outputs["report.md"].split("\n## ", 1)[0]
-                html_overview = outputs["dashboard.html"].split("<h2>", 1)[0]
+                html_overview = re.search(r"<section id='overview'>(.*?)</section>", outputs["dashboard.html"], re.S).group(1)
                 overview_text = "".join(ParsedHTML(html_overview).text)
                 self.assertIn(f"**{label}:** {verdict_summary}", markdown_overview)
                 self.assertIn(f"{label}: {verdict_summary}", overview_text)
@@ -212,7 +212,7 @@ class ReportRenderingTests(unittest.TestCase):
                 parsed = ParsedHTML(outputs["dashboard.html"])
                 self.assertEqual(parsed.links, [{"href": expected_destination}])
                 self.assertNotIn("img", parsed.tags)
-                self.assertEqual(parsed.tags.count("script"), 1)  # The dashboard's fixed script.
+                self.assertEqual(parsed.tags.count("script"), 2)  # Data script + fixed dashboard script.
                 self.assertIn(title, "".join(parsed.text))
                 self.assertIn(escape(title), outputs["dashboard.html"])
                 self.assertIn(escape(expected_destination), outputs["dashboard.html"])
@@ -236,7 +236,7 @@ class ReportRenderingTests(unittest.TestCase):
                     outputs = self.render_outputs(doc, lang)
                     parsed = ParsedHTML(outputs["dashboard.html"])
                     self.assertEqual(parsed.links, [])
-                    self.assertEqual(parsed.tags.count("script"), 1)
+                    self.assertEqual(parsed.tags.count("script"), 2)
                     self.assertNotIn("untrusted", parsed.tags)
                     self.assertIn(f"{title} — {url}", "".join(parsed.text))
                     self.assertIn(
@@ -321,11 +321,11 @@ class LineBreakRenderingTests(unittest.TestCase):
         doc["findings"][0]["title"] = "Leak 123456\x85789012"
         html = render.render_html(doc, "en")
         # The finding summary, project heading, byline and footer keep line breaks.
-        for selector in ("details[data-sev] summary", ".hero h1", ".hero .meta", ".footer"):
+        for selector in ("details[data-sev] summary", ".hero h2", ".hero .meta", ".footer", ".cx-band h1"):
             with self.subTest(selector=selector):
                 self.assertRegex(html, r"(^|[\s},])" + re.escape(selector)
                                  + r"(,[^{]*)?\{[^}]*white-space:pre-line")
-        self.assertIn("<h1>shop 123456\n789012</h1>", html)
+        self.assertIn("<h2>shop 123456\n789012</h2>", html)
         self.assertIn("Leak 123456\n789012", html)
         self.assertIn("team 123456\n789012", html)
         # A document title cannot hold a break; its lines are joined visibly.

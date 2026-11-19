@@ -116,7 +116,7 @@ LABELS = {
         "none": "記録なし。", "all": "すべて", "search": "検索", "excluded": "除外",
         "no_match": "条件に合う指摘はありません。",
         "kinds": {"defect": "不具合", "improvement": "改善提案"},
-        "results": {"applied": "実施", "N/A": "対象外", "not checked": "未確認"},
+        "results": {"applied": "適用", "N/A": "対象外", "not checked": "未確認"},
         "perspective_names": PERSPECTIVE_NAMES_JA,
     },
 }

@@ -3,7 +3,7 @@
     {
       "id": "SC-02",
       "kind": "screen",
-      "name": "チェックアウト",
+      "name": "Checkout",
       "note": "/checkout",
       "location": "web/checkout/CouponForm.tsx:18",
       "basis": "traced"
@@ -11,7 +11,7 @@
     {
       "id": "SC-03",
       "kind": "screen",
-      "name": "注文履歴",
+      "name": "Order history",
       "note": "/orders",
       "location": "web/orders/List.tsx:22",
       "basis": "traced"
@@ -19,7 +19,7 @@
     {
       "id": "SC-07",
       "kind": "screen",
-      "name": "管理: 返金",
+      "name": "Admin: Refunds",
       "note": "/admin/refunds",
       "location": "web/admin/Refunds.tsx:40",
       "basis": "traced"
@@ -27,7 +27,7 @@
     {
       "id": "SC-09",
       "kind": "screen",
-      "name": "請求書",
+      "name": "Invoice",
       "note": "/invoices/:id",
       "location": "web/billing/Invoice.tsx:33",
       "basis": "traced"
@@ -36,7 +36,7 @@
       "id": "API-01",
       "kind": "api",
       "name": "POST /orders",
-      "note": "注文の確定",
+      "note": "Place order",
       "location": "api/orders/routes.py:31",
       "basis": "traced"
     },
@@ -44,7 +44,7 @@
       "id": "API-02",
       "kind": "api",
       "name": "POST /billing/charge",
-      "note": "課金",
+      "note": "Charge",
       "location": "api/billing/routes.py:14",
       "basis": "traced"
     },
@@ -52,7 +52,7 @@
       "id": "API-03",
       "kind": "api",
       "name": "POST /admin/refunds",
-      "note": "返金の受付",
+      "note": "Accept refund",
       "location": "api/admin/refunds.py:20",
       "basis": "traced"
     },
@@ -60,7 +60,7 @@
       "id": "API-04",
       "kind": "api",
       "name": "GET /invoices/{id}",
-      "note": "請求書の取得",
+      "note": "Get invoice",
       "location": "api/billing/routes.py:52",
       "basis": "traced"
     },
@@ -68,7 +68,7 @@
       "id": "API-05",
       "kind": "api",
       "name": "GET /orders",
-      "note": "注文一覧",
+      "note": "Order list",
       "location": "api/orders/routes.py:64",
       "basis": "traced"
     },
@@ -76,7 +76,7 @@
       "id": "JOB-01",
       "kind": "job",
       "name": "refund_job",
-      "note": "返金ジョブ",
+      "note": "Refund job",
       "location": "worker/refunds/job.py:58",
       "basis": "traced"
     },
@@ -84,7 +84,7 @@
       "id": "DB-01",
       "kind": "db",
       "name": "orders",
-      "note": "注文",
+      "note": "Order",
       "location": "migrations/0007_orders.sql:3",
       "basis": "traced"
     },
@@ -92,7 +92,7 @@
       "id": "DB-02",
       "kind": "db",
       "name": "coupons",
-      "note": "クーポン",
+      "note": "Coupon",
       "location": "migrations/0009_coupons.sql:2",
       "basis": "traced"
     },
@@ -100,7 +100,7 @@
       "id": "DB-03",
       "kind": "db",
       "name": "invoices",
-      "note": "請求書",
+      "note": "Invoice",
       "location": "migrations/0012_invoices.sql:4",
       "basis": "traced"
     },
@@ -108,15 +108,15 @@
       "id": "DB-04",
       "kind": "db",
       "name": "refunds",
-      "note": "返金",
+      "note": "Refund",
       "location": "migrations/0015_refunds.sql:2",
       "basis": "traced"
     },
     {
       "id": "EXT-01",
       "kind": "ext",
-      "name": "決済ゲートウェイ",
-      "note": "外部サービス",
+      "name": "Payment gateway",
+      "note": "External service",
       "location": "api/billing/client.py:12",
       "basis": "traced"
     }

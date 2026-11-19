@@ -1,50 +1,50 @@
 {
   "meta": {
-    "project": "acme-shop（架空）",
-    "scope": "モノレポ全体: api/, worker/, web/, lib/",
+    "project": "acme-shop (fictional)",
+    "scope": "Whole monorepo: api/, worker/, web/, lib/",
     "commit": "90a5276",
     "date": "2026-11-06",
     "assessor": "Claude Code (sample)",
-    "method": "git 履歴 12 か月の読み取りと静的レビュー",
-    "lang": "ja",
+    "method": "Reading 12 months of git history, plus static review",
+    "lang": "en",
     "history_window": "12 months ago",
     "sample": {
       "read": 48,
       "candidates": 48
     }
   },
-  "summary": "架空のプロジェクト acme-shop の見本。部分修正の再発が api/orders に集中し、同じ入口が現在のコードに残っている。実在のコードや監査結果ではない。",
+  "summary": "A sample for the fictional project acme-shop. Recurring partial fixes concentrate in api/orders, and the same entry point remains in the current code. This is not real code or a real audit result.",
   "gates": [
     {
       "id": "G-01",
       "kind": "test",
-      "name": "単体テスト",
+      "name": "Unit tests",
       "status": "present",
       "evidence": "tests/orders/test_validate.py:1"
     },
     {
       "id": "G-02",
       "kind": "ci",
-      "name": "CI 型検査",
+      "name": "CI type check",
       "status": "present",
       "evidence": ".github/workflows/ci.yml:12"
     },
     {
       "id": "G-03",
       "kind": "test",
-      "name": "E2E テスト",
+      "name": "E2E tests",
       "status": "absent"
     },
     {
       "id": "G-04",
       "kind": "ci",
-      "name": "依存更新の検査",
+      "name": "Dependency update check",
       "status": "absent"
     },
     {
       "id": "G-05",
       "kind": "review",
-      "name": "レビュー規則",
+      "name": "Review rules",
       "status": "unknown"
     }
   ],
@@ -61,7 +61,7 @@
         ],
         "channel": "fix",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-001)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-001)"
       },
       "gate_missed": [
         "G-01"
@@ -81,7 +81,7 @@
         ],
         "channel": "fix",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-002)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-002)"
       },
       "gate_missed": [
         "G-01"
@@ -101,7 +101,7 @@
         ],
         "channel": "fix",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-003)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-003)"
       },
       "gate_missed": [
         "G-01"
@@ -121,7 +121,7 @@
         ],
         "channel": "fix",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-004)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-004)"
       },
       "gate_missed": [
         "G-01"
@@ -179,7 +179,7 @@
         ],
         "channel": "feature",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-007)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-007)"
       },
       "gate_missed": [
         "G-01"
@@ -199,7 +199,7 @@
         ],
         "channel": "feature",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-008)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-008)"
       },
       "gate_missed": [
         "G-01"
@@ -219,7 +219,7 @@
         ],
         "channel": "feature",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-009)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-009)"
       },
       "gate_missed": [
         "G-01"
@@ -273,7 +273,7 @@
         ],
         "channel": "feature",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-012)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-012)"
       },
       "gate_missed": [
         "G-05"
@@ -293,7 +293,7 @@
         ],
         "channel": "feature",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-013)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-013)"
       },
       "gate_missed": [
         "G-05"
@@ -313,7 +313,7 @@
         ],
         "channel": "feature",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-014)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-014)"
       },
       "gate_missed": [
         "G-05"
@@ -418,7 +418,7 @@
         ],
         "channel": "refactor",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-020)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-020)"
       },
       "gate_missed": [
         "G-03"
@@ -457,7 +457,7 @@
         ],
         "channel": "feature",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-022)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-022)"
       },
       "gate_missed": [
         "G-02"
@@ -477,7 +477,7 @@
         ],
         "channel": "feature",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-023)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-023)"
       },
       "gate_missed": [
         "G-02"
@@ -531,7 +531,7 @@
         ],
         "channel": "dependency",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-026)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-026)"
       },
       "gate_missed": [
         "G-04"
@@ -551,7 +551,7 @@
         ],
         "channel": "dependency",
         "strength": "Traced",
-        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-027)"
+        "reason": "Read the diffs of the fix and its origin and confirmed the defect sits in the same check (E-027)"
       },
       "gate_missed": [
         "G-04"
@@ -654,103 +654,103 @@
       "id": "E-033",
       "commit": "db9d9bb2eb689518a7519292b6c7f27917f11740",
       "type": "requirement",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-034",
       "commit": "7ac626017c91ac445f2a8e5a50e03f26eee807b4",
       "type": "requirement",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-035",
       "commit": "2faaa5f1ecceb58bd2a5b9158a16eaac20f0e85e",
       "type": "requirement",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-036",
       "commit": "61a15f97f3cbd1d46c4992d95168a96ca45383a4",
       "type": "requirement",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-037",
       "commit": "4f86e789253caabe88b6eceba5c0b61724c54be0",
       "type": "requirement",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-038",
       "commit": "9384dbe397816433e547a30ad4e674d7c2414a81",
       "type": "requirement",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-039",
       "commit": "c42a1db82424dad910a5a611f06e6773e280f931",
       "type": "requirement",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-040",
       "commit": "8780a83a8e7ccd72ff3d6ed21018dd8f321d8b3c",
       "type": "requirement",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-041",
       "commit": "e32b1577d64d2a4e7594424303740a1645e6302d",
       "type": "requirement",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-042",
       "commit": "f9b5815003a72256ec9191b4e1c38cd909b1ec6c",
       "type": "not-defect",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-043",
       "commit": "39568ff9ab6c39c76f8e004c85dbb6df4306d969",
       "type": "not-defect",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-044",
       "commit": "eb1998171c6fcf5348860ff24e00a03f0efd5410",
       "type": "not-defect",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-045",
       "commit": "b5685faa6114845c45624a2a424032814a7a4ddb",
       "type": "not-defect",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-046",
       "commit": "c1eca595013dae63569e99cd8d83928fe5880ee6",
       "type": "not-defect",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-047",
       "commit": "aeaf141924ce3169131010a042469cb5a4faa693",
       "type": "not-defect",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     },
     {
       "id": "E-048",
       "commit": "b8f8ecc3f7e6fcd3913e26c7c179c86c2f533ab7",
       "type": "not-defect",
-      "note": "読んだ結果、欠陥ではなかった"
+      "note": "Read it; not a defect"
     }
   ],
   "findings": [
     {
       "id": "BG-001",
-      "title": "ゼロ幅空白のクーポンで注文が確定する",
+      "title": "An order is placed with a zero-width-space coupon",
       "status": "Open",
       "pattern": "BP11",
       "module": "api/orders",
@@ -759,7 +759,7 @@
       "introduced_in": {
         "commit": "28a339713111e9acfdcba2471493f40a5b96194b",
         "strength": "Traced",
-        "reason": "77aa が NBSP だけを足し、ゼロ幅空白を判定に入れなかった"
+        "reason": "77aa added only NBSP and left the zero-width space out of the check"
       },
       "severity": "High",
       "confidence": "Confirmed",
@@ -789,7 +789,7 @@
         }
       ],
       "actors": [
-        "ログイン済みの購入者"
+        "Signed-in buyer"
       ],
       "conditions": [],
       "relations": [
@@ -797,113 +797,113 @@
           "type": "regression_of",
           "to": "BG-007",
           "strength": "Traced",
-          "evidence": "77aa の差分で同じ api/orders/validate.py:42 を確認"
+          "evidence": "The 77aa diff shows the same api/orders/validate.py:42"
         }
       ],
       "validation": {
         "verdict": "Valid",
         "method": "static",
-        "evidence": "api/orders/validate.py:42 を読み、経路を端から端までたどった"
+        "evidence": "Read api/orders/validate.py:42 and traced the path end to end"
       },
       "risk": {
         "likelihood": "Medium",
         "impact": "High",
         "level": "High",
-        "detectability": "低い（エラーにならない）",
-        "basis": "入力は誰でも可能。発生頻度の実測なし"
+        "detectability": "Low (no error is raised)",
+        "basis": "Anyone can enter it. Frequency not measured"
       },
       "hazard": {
         "classes": [
-          "金銭"
+          "money"
         ],
         "irreversible": "no",
         "silent": "yes",
-        "reach": "全購入者",
-        "recovery": "注文の取消と再請求"
+        "reach": "All buyers",
+        "recovery": "Cancel the order and re-bill"
       },
       "repro": {
         "state": "static",
         "preconditions": [
-          "有効な商品がカートにある",
-          "テスト用アカウント（架空データ）"
+          "A valid item is in the cart",
+          "A test account (fictional data)"
         ],
         "steps": [
-          "チェックアウト画面を開く",
-          "クーポン欄にゼロ幅空白（U+200B）だけを入力する",
-          "注文を確定する"
+          "Open the Checkout screen",
+          "Enter only a zero-width space (U+200B) in the coupon field",
+          "Place the order"
         ],
-        "expected": "クーポン不正のエラーで止まる",
-        "actual": "割引 0 円の注文が検証を通って確定する（コードから導出）",
-        "last_run": "未実行"
+        "expected": "Stops with an invalid-coupon error",
+        "actual": "An order with a 0 yen discount passes validation and is placed (derived from code)",
+        "last_run": "not run"
       },
-      "tests": "なし",
-      "tests_missing": "空白クラスの property test",
-      "fix": "Unicode の空白を統一して判定する",
-      "guard": "空白クラスの property test",
-      "regression_test": "空白クラスの property test",
+      "tests": "None",
+      "tests_missing": "Property test over whitespace classes",
+      "fix": "Normalise Unicode whitespace before the check",
+      "guard": "Property test over whitespace classes",
+      "regression_test": "Property test over whitespace classes",
       "path": [
         {
-          "from": "POST /orders（ゼロ幅空白）",
-          "to": "ルートが検証へ渡す",
+          "from": "POST /orders (zero-width space)",
+          "to": "Route passes it to validation",
           "state": "allowed",
           "at": "api/orders/routes.py:31",
-          "why": "認証済みなら到達"
+          "why": "Reachable when authenticated"
         },
         {
-          "from": "ルートが検証へ渡す",
-          "to": "strip() がゼロ幅空白を残す",
+          "from": "Route passes it to validation",
+          "to": "strip() keeps the zero-width space",
           "state": "allowed",
           "at": "api/orders/validate.py:42",
-          "why": "guard なし"
+          "why": "No guard"
         },
         {
-          "from": "strip() がゼロ幅空白を残す",
-          "to": "無効クーポンで注文確定",
+          "from": "strip() keeps the zero-width space",
+          "to": "Order placed with an invalid coupon",
           "state": "allowed",
           "at": "api/orders/routes.py:40",
-          "why": "E2E なし"
+          "why": "No E2E"
         }
       ],
       "sibling_sites": [
         {
           "location": "api/orders/validate.py:67",
           "state": "affected",
-          "evidence": "ギフトコードも同じ strip() で判定"
+          "evidence": "Gift codes are checked with the same strip()"
         },
         {
           "location": "api/admin/coupons.py:27",
           "state": "affected",
-          "evidence": "管理画面の登録時も同じ判定"
+          "evidence": "The same check runs when registering in the admin screen"
         },
         {
           "location": "web/checkout/CouponForm.tsx:44",
           "state": "safe",
-          "evidence": "画面側の補助チェックで、確定の判定はサーバー側"
+          "evidence": "A helper check on the screen; the deciding check is on the server"
         }
       ],
       "affected_releases": {
         "first": "v1.5",
-        "last": "v1.6（最新）",
-        "basis": "tag: 77aa を含む最初のタグから"
+        "last": "v1.6 (latest)",
+        "basis": "tag: from the first tag containing 77aa"
       },
       "data_remediation": {
         "needed": "yes",
-        "locate": "orders で discount_total が 0 かつ coupon_code が空白文字だけの行（SQL 案、未実行）",
-        "method": "注文ごとに取消か再請求を人が判断",
-        "count": "未確認（実データは読まない）"
+        "locate": "Rows in orders where discount_total is 0 and coupon_code is only whitespace (draft SQL, not run)",
+        "method": "A person decides per order whether to cancel or re-bill",
+        "count": "Unconfirmed (real data is not read)"
       },
       "detection": {
-        "source": "bug-scan の前回実行",
+        "source": "Previous bug-scan run",
         "stage": "dev",
         "detected_at": "2026-07-02",
-        "basis": "git と依頼者提供の issue",
+        "basis": "git and issues supplied by the requester",
         "days_to_detect": 11
       },
       "key": "a49271f4abd9"
     },
     {
       "id": "BG-002",
-      "title": "課金失敗が 0 円の請求として記録される",
+      "title": "A failed charge is recorded as a 0 yen invoice",
       "status": "Open",
       "pattern": "BP02",
       "module": "api/billing",
@@ -944,7 +944,7 @@
         }
       ],
       "actors": [
-        "購入者"
+        "Buyer"
       ],
       "conditions": [],
       "relations": [
@@ -952,106 +952,106 @@
           "type": "caused_by",
           "to": "BG-006",
           "strength": "Blamed",
-          "evidence": "修正 18fa の行を blame。因果は未確認"
+          "evidence": "Blamed the lines of fix 18fa. Causation unconfirmed"
         },
         {
           "type": "blocks",
           "to": "BG-003",
           "strength": "Traced",
-          "evidence": "請求額が正しくないと二重返金を照合できない"
+          "evidence": "Double refunds cannot be reconciled while invoice amounts are wrong"
         }
       ],
       "validation": {
         "verdict": "Valid",
         "method": "static",
-        "evidence": "api/billing/client.py:77 を読み、経路を端から端までたどった"
+        "evidence": "Read api/billing/client.py:77 and traced the path end to end"
       },
       "risk": {
         "likelihood": "Medium",
         "impact": "Medium",
         "level": "Medium",
-        "detectability": "中（請求額の確認で分かる）",
-        "basis": "決済 API の失敗時に発生。失敗率は未測定"
+        "detectability": "Medium (visible when checking invoice amounts)",
+        "basis": "Occurs when the payment API fails. Failure rate not measured"
       },
       "hazard": {
         "classes": [
-          "金銭",
-          "データ不整合"
+          "money",
+          "data inconsistency"
         ],
         "irreversible": "no",
         "silent": "yes",
-        "reach": "決済失敗時の購入者",
-        "recovery": "対象請求書の再計算"
+        "reach": "Buyers whose payment fails",
+        "recovery": "Recalculate the affected invoices"
       },
       "repro": {
         "state": "static",
         "preconditions": [
-          "決済サンドボックスがエラーを返す設定"
+          "Payment sandbox configured to return errors"
         ],
         "steps": [
-          "商品を購入する",
-          "請求書画面を開く"
+          "Buy an item",
+          "Open the Invoice screen"
         ],
-        "expected": "支払い失敗として表示される",
-        "actual": "合計 0 円の請求書が作られる（コードから導出）",
-        "last_run": "未実行"
+        "expected": "Shown as a failed payment",
+        "actual": "An invoice totalling 0 yen is created (derived from code)",
+        "last_run": "not run"
       },
-      "tests": "なし",
-      "tests_missing": "決済失敗時の請求状態を確認するテスト",
-      "fix": "失敗を 0 と区別して呼び出し元へ返す",
-      "guard": "決済失敗時の請求状態を確認するテスト",
-      "regression_test": "決済失敗時の請求状態を確認するテスト",
+      "tests": "None",
+      "tests_missing": "Test that checks the invoice state when payment fails",
+      "fix": "Return the failure to the caller, distinct from 0",
+      "guard": "Test that checks the invoice state when payment fails",
+      "regression_test": "Test that checks the invoice state when payment fails",
       "path": [
         {
-          "from": "決済 API の失敗",
-          "to": "except が 0 を返す",
+          "from": "Payment API failure",
+          "to": "except returns 0",
           "state": "allowed",
           "at": "api/billing/client.py:77",
-          "why": "例外を握りつぶす"
+          "why": "Swallows the exception"
         },
         {
-          "from": "except が 0 を返す",
-          "to": "0 円の請求書",
+          "from": "except returns 0",
+          "to": "0 yen invoice",
           "state": "allowed",
           "at": "api/billing/routes.py:14",
-          "why": "呼び出し元が検査しない"
+          "why": "Caller does not check"
         }
       ],
       "sibling_sites": [
         {
           "location": "api/billing/client.py:102",
           "state": "affected",
-          "evidence": "返金経路にも同じ except がある"
+          "evidence": "The refund path has the same except"
         },
         {
           "location": "api/orders/shipping.py:55",
           "state": "unknown",
-          "evidence": "配送料 API の失敗時の値を追跡できていない"
+          "evidence": "The value on shipping-fee API failure has not been traced"
         }
       ],
       "affected_releases": {
         "first": "v1.4",
-        "last": "v1.6（最新）",
-        "basis": "tag: 混入元が Blamed のため暫定"
+        "last": "v1.6 (latest)",
+        "basis": "tag: provisional because the origin is Blamed"
       },
       "data_remediation": {
         "needed": "yes",
-        "locate": "invoices で total が 0 かつ支払い状態が失敗の行（SQL 案、未実行）",
-        "method": "対象の請求書を再計算して再発行",
-        "count": "未確認（実データは読まない）"
+        "locate": "Rows in invoices where total is 0 and the payment status is failed (draft SQL, not run)",
+        "method": "Recalculate and reissue the affected invoices",
+        "count": "Unconfirmed (real data is not read)"
       },
       "detection": {
-        "source": "bug-scan の前回実行",
+        "source": "Previous bug-scan run",
         "stage": "dev",
         "detected_at": "2026-08-11",
-        "basis": "git と依頼者提供の issue",
+        "basis": "git and issues supplied by the requester",
         "days_to_detect": 101
       },
       "key": "6900670d40db"
     },
     {
       "id": "BG-003",
-      "title": "返金ジョブの再配信で二重に返金される",
+      "title": "Redelivery of the Refund job refunds twice",
       "status": "Triaged",
       "pattern": "BP05",
       "module": "worker/refunds",
@@ -1059,7 +1059,7 @@
       "last_seen": "2026-11-06",
       "introduced_in": {
         "strength": "Unattributable",
-        "reason": "最初から冪等処理が無い（欠落）"
+        "reason": "Idempotency was never there (omission)"
       },
       "severity": "Medium",
       "confidence": "Environment-dependent",
@@ -1093,107 +1093,107 @@
         }
       ],
       "actors": [
-        "サポート担当"
+        "Support staff"
       ],
       "conditions": [],
       "relations": [],
       "validation": {
         "verdict": "Likely",
         "method": "static",
-        "evidence": "worker/refunds/job.py:58 を読み、経路を端から端までたどった"
+        "evidence": "Read worker/refunds/job.py:58 and traced the path end to end"
       },
       "risk": {
         "likelihood": "Low",
         "impact": "High",
         "level": "Medium",
-        "detectability": "低い（照合まで見えない）",
-        "basis": "ブローカーが at-least-once の場合のみ。設定はリポジトリ外"
+        "detectability": "Low (invisible until reconciliation)",
+        "basis": "Only if the broker is at-least-once. The setting is outside the repository"
       },
       "hazard": {
         "classes": [
-          "金銭",
-          "データ不整合"
+          "money",
+          "data inconsistency"
         ],
         "irreversible": "yes",
         "silent": "yes",
-        "reach": "返金対象の注文",
-        "recovery": "決済側との手動照合"
+        "reach": "Orders being refunded",
+        "recovery": "Manual reconciliation with the payment side"
       },
       "repro": {
         "state": "unknown",
         "preconditions": [
-          "ブローカーが同じメッセージを再配信する",
-          "ステージング環境と決済サンドボックス"
+          "The broker redelivers the same message",
+          "Staging environment and payment sandbox"
         ],
         "steps": [
-          "管理画面で返金を実行する",
-          "完了前にワーカーを停止する",
-          "ワーカーを再起動して再配信させる"
+          "Run a refund from the admin screen",
+          "Stop the worker before it finishes",
+          "Restart the worker so the message is redelivered"
         ],
-        "expected": "返金は 1 回だけ",
-        "actual": "2 回送金される可能性（配信保証が未確認）",
-        "last_run": "未実行"
+        "expected": "The refund happens once",
+        "actual": "Money may be sent twice (delivery guarantee unconfirmed)",
+        "last_run": "not run"
       },
-      "tests": "なし",
-      "tests_missing": "同じメッセージを 2 回流すテスト",
-      "fix": "冪等キーで 1 回に限定する",
-      "guard": "同じメッセージを 2 回流すテスト",
-      "regression_test": "同じメッセージを 2 回流すテスト",
+      "tests": "None",
+      "tests_missing": "Test that delivers the same message twice",
+      "fix": "Limit it to once with an idempotency key",
+      "guard": "Test that delivers the same message twice",
+      "regression_test": "Test that delivers the same message twice",
       "path": [
         {
-          "from": "返金ジョブの再配信",
-          "to": "冪等キーなしで更新",
+          "from": "Refund job redelivery",
+          "to": "Updates without an idempotency key",
           "state": "allowed",
           "at": "worker/refunds/job.py:58",
-          "why": "再実行で到達"
+          "why": "Reached on re-run"
         },
         {
-          "from": "冪等キーなしで更新",
-          "to": "ブローカー設定",
+          "from": "Updates without an idempotency key",
+          "to": "Broker settings",
           "state": "unknown",
-          "why": "配信保証はリポジトリ外"
+          "why": "The delivery guarantee is outside the repository"
         },
         {
-          "from": "ブローカー設定",
-          "to": "二重返金",
+          "from": "Broker settings",
+          "to": "Double refund",
           "state": "unknown",
-          "why": "前の判定で停止"
+          "why": "Stopped at the previous step"
         }
       ],
       "sibling_sites": [
         {
           "location": "worker/notify/app.py:40",
           "state": "safe",
-          "evidence": "重複しても通知が 2 通届くだけで、金額は動かない"
+          "evidence": "A duplicate only sends two notifications; no money moves"
         },
         {
           "location": "worker/billing/sync.py:33",
           "state": "safe",
-          "evidence": "冪等キーで 1 回に限定済み"
+          "evidence": "Already limited to once with an idempotency key"
         }
       ],
       "affected_releases": {
         "first": "UNKNOWN",
-        "last": "v1.6（最新）",
-        "basis": "混入元なしのためタグを特定できない"
+        "last": "v1.6 (latest)",
+        "basis": "No origin, so no tag can be identified"
       },
       "data_remediation": {
         "needed": "unknown",
-        "locate": "refunds と決済ゲートウェイの取引履歴を照合（照合方法の案、未実行）",
-        "method": "過剰な返金の回収方法は人が判断",
-        "count": "未確認（実データは読まない）"
+        "locate": "Reconcile refunds against the Payment gateway transaction history (draft method, not run)",
+        "method": "A person decides how to recover excess refunds",
+        "count": "Unconfirmed (real data is not read)"
       },
       "detection": {
-        "source": "修正 d4e2 のレビュー（修正後も別経路が残存）",
+        "source": "Review of fix d4e2 (another path remained after the fix)",
         "stage": "dev",
         "detected_at": "2026-07-16",
-        "basis": "git と依頼者提供の issue"
+        "basis": "git and issues supplied by the requester"
       },
       "key": "32098a9c2ae4"
     },
     {
       "id": "BG-004",
-      "title": "依存更新で日付ピッカーの初期値が空になる",
+      "title": "A dependency update leaves the date picker's default empty",
       "status": "Reopened",
       "pattern": "BP06",
       "module": "web/checkout",
@@ -1202,7 +1202,7 @@
       "introduced_in": {
         "commit": "88ed9d786c58a098e6f7dfcd5b0457a5d9e34f17",
         "strength": "Traced",
-        "reason": "b7c1 の更新で既定値が変わった"
+        "reason": "The b7c1 update changed the default"
       },
       "severity": "Low",
       "confidence": "Confirmed",
@@ -1218,54 +1218,54 @@
         }
       ],
       "actors": [
-        "購入者"
+        "Buyer"
       ],
       "conditions": [],
       "relations": [],
       "validation": {
         "verdict": "Valid",
         "method": "static",
-        "evidence": "web/checkout/DatePicker.tsx:27 を読み、経路を端から端までたどった"
+        "evidence": "Read web/checkout/DatePicker.tsx:27 and traced the path end to end"
       },
       "risk": {
         "likelihood": "Medium",
         "impact": "Low",
         "level": "Low",
-        "detectability": "高い（画面で分かる）",
-        "basis": "再入力で回避できる。一度修正後に再発"
+        "detectability": "High (visible on screen)",
+        "basis": "Re-entering works around it. It recurred after one fix"
       },
       "hazard": {
         "classes": [
-          "操作不能（一時）"
+          "unusable (temporary)"
         ],
         "irreversible": "no",
         "silent": "no",
-        "reach": "配送日を選ぶ購入者",
-        "recovery": "手入力で回避可"
+        "reach": "Buyers who pick a delivery date",
+        "recovery": "Work around it by typing the date"
       },
       "repro": {
         "state": "static",
         "preconditions": [
-          "配送日の入力がある商品"
+          "An item that asks for a delivery date"
         ],
         "steps": [
-          "チェックアウト画面を開く",
-          "配送日欄を確認する"
+          "Open the Checkout screen",
+          "Check the delivery date field"
         ],
-        "expected": "翌日が初期表示",
-        "actual": "空欄（コードから導出）",
-        "last_run": "未実行"
+        "expected": "Tomorrow is shown by default",
+        "actual": "Empty (derived from code)",
+        "last_run": "not run"
       },
-      "tests": "なし",
-      "tests_missing": "初期表示を確認する画面テスト",
-      "fix": "初期値を明示して渡す",
-      "guard": "初期表示を確認する画面テスト",
-      "regression_test": "初期表示を確認する画面テスト",
+      "tests": "None",
+      "tests_missing": "Screen test that checks the initial value",
+      "fix": "Pass the default explicitly",
+      "guard": "Screen test that checks the initial value",
+      "regression_test": "Screen test that checks the initial value",
       "key": "e443d2199f6c"
     },
     {
       "id": "BG-005",
-      "title": "注文通知のリスナーが未登録の可能性がある",
+      "title": "The order notification listener may not be registered",
       "status": "Unverified",
       "pattern": "BP07",
       "module": "worker/notify",
@@ -1273,7 +1273,7 @@
       "last_seen": "2026-11-06",
       "introduced_in": {
         "strength": "Unattributable",
-        "reason": "登録箇所を特定できていない"
+        "reason": "The registration site has not been identified"
       },
       "severity": "Info",
       "confidence": "Suspected",
@@ -1289,53 +1289,53 @@
         }
       ],
       "actors": [
-        "購入者"
+        "Buyer"
       ],
       "conditions": [],
       "relations": [],
       "validation": {
         "verdict": "Unverified",
         "method": "static",
-        "evidence": "worker/notify/app.py:15 を読み、経路を端から端までたどった"
+        "evidence": "Read worker/notify/app.py:15 and traced the path end to end"
       },
       "risk": {
         "likelihood": "Low",
         "impact": "Low",
         "level": "Low",
-        "detectability": "中（通知が届かないと分かる）",
-        "basis": "登録箇所を静的に特定できていない"
+        "detectability": "Medium (noticed when notifications do not arrive)",
+        "basis": "The registration site could not be identified statically"
       },
       "hazard": {
         "classes": [
-          "機能不全"
+          "malfunction"
         ],
         "irreversible": "no",
         "silent": "yes",
-        "reach": "通知を受ける購入者",
-        "recovery": "通知の再送"
+        "reach": "Buyers who receive notifications",
+        "recovery": "Resend the notifications"
       },
       "repro": {
         "state": "unknown",
         "preconditions": [
-          "不明"
+          "Unknown"
         ],
         "steps": [
-          "手順未確定（通知の登録箇所を確認する必要あり）"
+          "Steps not settled (the notification registration site must be checked first)"
         ],
-        "expected": "注文確定で通知される",
-        "actual": "未確認",
-        "last_run": "未実行"
+        "expected": "A notification is sent when an order is placed",
+        "actual": "Unconfirmed",
+        "last_run": "not run"
       },
-      "tests": "なし",
-      "tests_missing": "通知まで通す E2E",
-      "fix": "登録を起動時に検査する",
-      "guard": "通知まで通す E2E",
-      "regression_test": "通知まで通す E2E",
+      "tests": "None",
+      "tests_missing": "E2E through to the notification",
+      "fix": "Check registration at startup",
+      "guard": "E2E through to the notification",
+      "regression_test": "E2E through to the notification",
       "key": "21a6c49712af"
     },
     {
       "id": "BG-006",
-      "title": "返金時に税額が再計算されない",
+      "title": "Tax is not recalculated on refund",
       "status": "Fixed",
       "pattern": "BP04",
       "module": "api/billing",
@@ -1344,7 +1344,7 @@
       "introduced_in": {
         "commit": "541bfe743064f232d05980387d4f3dfad3dd01cd",
         "strength": "Traced",
-        "reason": "4c7d が税計算を返金経路に通さなかった"
+        "reason": "4c7d did not route the tax calculation through the refund path"
       },
       "confidence": "Confirmed",
       "location": [
@@ -1372,71 +1372,71 @@
         }
       ],
       "actors": [
-        "サポート担当"
+        "Support staff"
       ],
       "conditions": [],
       "relations": [],
       "validation": {
         "verdict": "Valid",
         "method": "static",
-        "evidence": "api/billing/tax.py:120 を読み、経路を端から端までたどった"
+        "evidence": "Read api/billing/tax.py:120 and traced the path end to end"
       },
       "hazard": {
         "classes": [
-          "金銭",
-          "法令"
+          "money",
+          "legal"
         ],
         "irreversible": "no",
         "silent": "yes",
-        "reach": "返金された請求書",
-        "recovery": "請求書の再発行"
+        "reach": "Refunded invoices",
+        "recovery": "Reissue the invoices"
       },
       "repro": {
         "state": "test",
         "preconditions": [
-          "税込み請求書がある"
+          "A tax-inclusive invoice exists"
         ],
         "steps": [
-          "一部返金を実行する",
-          "請求書を開く"
+          "Run a partial refund",
+          "Open the invoice"
         ],
-        "expected": "返金後の税額",
-        "actual": "修正前は返金前の税額が残った",
-        "last_run": "18fa の回帰テスト"
+        "expected": "The tax after the refund",
+        "actual": "Before the fix, the pre-refund tax remained",
+        "last_run": "Regression test in 18fa"
       },
       "tests": "tests/test_tax.py:44",
       "tests_missing": "tests/test_tax.py:44",
-      "fix": "税計算を 1 か所に集約",
+      "fix": "Consolidate the tax calculation in one place",
       "guard": "tests/test_tax.py:44",
       "regression_test": "tests/test_tax.py:44",
       "fixed_in": "aea804c2d9e105d3b3df247a241ebfc0ced1dbae",
       "path": [
         {
-          "from": "別通貨の返金",
-          "to": "税を再計算",
+          "from": "Refund in another currency",
+          "to": "Recalculate tax",
           "state": "allowed",
           "at": "api/billing/tax.py:120",
-          "why": "返金経由で到達"
+          "why": "Reached via a refund"
         },
         {
-          "from": "税を再計算",
-          "to": "通貨別のテストが固定",
+          "from": "Recalculate tax",
+          "to": "A per-currency test pins it",
           "state": "blocked",
           "at": "tests/test_tax.py:44",
-          "why": "テストと guard で停止"
+          "why": "Stopped by the test and guard"
         },
         {
-          "from": "通貨別のテストが固定",
-          "to": "税額の誤り",
+          "from": "A per-currency test pins it",
+          "to": "Wrong tax amount",
           "state": "blocked",
-          "why": "前の判定で停止"
+          "why": "Stopped at the previous step"
         }
       ],
       "detection": {
-        "source": "サポートへの問い合わせ（issue の参照つき）",
+        "source": "Support inquiry (with an issue reference)",
         "stage": "release",
         "detected_at": "2026-04-10",
-        "basis": "git と依頼者提供の issue",
+        "basis": "git and issues supplied by the requester",
         "days_to_detect": 60,
         "days_to_fix": 22
       },
@@ -1444,7 +1444,7 @@
     },
     {
       "id": "BG-007",
-      "title": "空白のみのクーポンで注文が確定する",
+      "title": "An order is placed with a whitespace-only coupon",
       "status": "Fixed",
       "pattern": "BP11",
       "module": "api/orders",
@@ -1453,7 +1453,7 @@
       "introduced_in": {
         "commit": "a5bf7d2a1bdc86d66fa9bd6cce92db6f7f5a5486",
         "strength": "Traced",
-        "reason": "c3d4 が空文字だけを拒否した"
+        "reason": "c3d4 rejected only the empty string"
       },
       "confidence": "Confirmed",
       "location": [
@@ -1479,49 +1479,49 @@
         }
       ],
       "actors": [
-        "ログイン済みの購入者"
+        "Signed-in buyer"
       ],
       "conditions": [],
       "relations": [],
       "validation": {
         "verdict": "Valid",
         "method": "static",
-        "evidence": "api/orders/validate.py:42 を読み、経路を端から端までたどった"
+        "evidence": "Read api/orders/validate.py:42 and traced the path end to end"
       },
       "hazard": {
         "classes": [
-          "金銭"
+          "money"
         ],
         "irreversible": "no",
         "silent": "yes",
-        "reach": "全購入者",
-        "recovery": "注文の取消と再請求"
+        "reach": "All buyers",
+        "recovery": "Cancel the order and re-bill"
       },
       "repro": {
         "state": "test",
         "preconditions": [
-          "有効な商品がカートにある"
+          "A valid item is in the cart"
         ],
         "steps": [
-          "クーポン欄に半角空白だけを入力する",
-          "注文を確定する"
+          "Enter only ASCII spaces in the coupon field",
+          "Place the order"
         ],
-        "expected": "クーポン不正のエラー",
-        "actual": "修正前は確定していた",
-        "last_run": "e5f6 の回帰テスト"
+        "expected": "Invalid-coupon error",
+        "actual": "Before the fix, the order was placed",
+        "last_run": "Regression test in e5f6"
       },
       "tests": "tests/orders/test_validate.py:88",
       "tests_missing": "tests/orders/test_validate.py:88",
-      "fix": "strip() 後に空を拒否",
+      "fix": "Reject empty input after strip()",
       "guard": "tests/orders/test_validate.py:88",
       "regression_test": "tests/orders/test_validate.py:88",
       "fixed_in": "a7e6bef900b59b349cd0c647d7fb4f5a2957029a",
       "variant": "blank-only-input",
       "detection": {
-        "source": "利用者報告（issue の参照つき）",
+        "source": "User report (with an issue reference)",
         "stage": "release",
         "detected_at": "2026-03-18",
-        "basis": "git と依頼者提供の issue",
+        "basis": "git and issues supplied by the requester",
         "days_to_detect": 9,
         "days_to_fix": 13
       },
@@ -1529,7 +1529,7 @@
     },
     {
       "id": "BG-008",
-      "title": "API のキー変更で合計金額が未定義と表示される",
+      "title": "An API key rename shows the order total as undefined",
       "status": "Fixed",
       "pattern": "BP03",
       "module": "web/checkout",
@@ -1538,7 +1538,7 @@
       "introduced_in": {
         "commit": "88ed9d786c58a098e6f7dfcd5b0457a5d9e34f17",
         "strength": "Traced",
-        "reason": "b7c1 の更新でキー名が変わった"
+        "reason": "The b7c1 update renamed the key"
       },
       "confidence": "Confirmed",
       "location": [
@@ -1557,7 +1557,7 @@
         }
       ],
       "actors": [
-        "購入者"
+        "Buyer"
       ],
       "conditions": [],
       "relations": [
@@ -1565,47 +1565,47 @@
           "type": "caused_by",
           "to": "BG-004",
           "strength": "Traced",
-          "evidence": "依存更新 b7c1 がキー名も変更"
+          "evidence": "Dependency update b7c1 also renamed the key"
         }
       ],
       "validation": {
         "verdict": "Valid",
         "method": "static",
-        "evidence": "web/checkout/api.ts:41 を読み、経路を端から端までたどった"
+        "evidence": "Read web/checkout/api.ts:41 and traced the path end to end"
       },
       "hazard": {
         "classes": [
-          "表示誤り"
+          "wrong display"
         ],
         "irreversible": "no",
         "silent": "no",
-        "reach": "全購入者",
-        "recovery": "画面の再読込では直らない"
+        "reach": "All buyers",
+        "recovery": "Reloading the screen does not fix it"
       },
       "repro": {
         "state": "test",
         "preconditions": [
-          "カートに商品がある"
+          "An item is in the cart"
         ],
         "steps": [
-          "チェックアウト画面を開く",
-          "合計金額を確認する"
+          "Open the Checkout screen",
+          "Check the order total"
         ],
-        "expected": "合計金額を表示",
-        "actual": "修正前は undefined を表示",
-        "last_run": "d91e の契約テスト"
+        "expected": "Shows the order total",
+        "actual": "Before the fix, undefined was shown",
+        "last_run": "Contract test in d91e"
       },
       "tests": "tests/checkout/contract.test.ts:12",
       "tests_missing": "tests/checkout/contract.test.ts:12",
-      "fix": "キー名を型で共有",
+      "fix": "Share the key name through a type",
       "guard": "tests/checkout/contract.test.ts:12",
       "regression_test": "tests/checkout/contract.test.ts:12",
       "fixed_in": "dbc7ae8d9fe2a61563e13e35abe5ecefcf4d708f",
       "detection": {
-        "source": "CI の型検査",
+        "source": "CI type check",
         "stage": "ci",
         "detected_at": "2026-06-05",
-        "basis": "git と依頼者提供の issue",
+        "basis": "git and issues supplied by the requester",
         "days_to_detect": 3,
         "days_to_fix": 15
       },
@@ -1615,7 +1615,7 @@
   "issues": [
     {
       "id": "I-01",
-      "kind": "テスト不在",
+      "kind": "untested",
       "at": "worker/refunds/",
       "feeds": [
         "BP05"
@@ -1623,15 +1623,15 @@
     },
     {
       "id": "I-02",
-      "kind": "ルール重複",
-      "at": "billing/tax と refunds/job",
+      "kind": "duplicated rule",
+      "at": "billing/tax and refunds/job",
       "feeds": [
         "BP04"
       ]
     },
     {
       "id": "I-03",
-      "kind": "例外の握りつぶし",
+      "kind": "swallowed exception",
       "at": "api/billing/client.py:77",
       "feeds": [
         "BP02"
@@ -1639,8 +1639,8 @@
     },
     {
       "id": "I-04",
-      "kind": "E2E ゲート不在",
-      "at": "リポジトリ全体",
+      "kind": "no E2E gate",
+      "at": "Whole repository",
       "feeds": [
         "BP05",
         "BP08",
@@ -1649,7 +1649,7 @@
     },
     {
       "id": "I-05",
-      "kind": "高 churn・高複雑度",
+      "kind": "high churn, high complexity",
       "at": "api/orders/validate.py",
       "feeds": [
         "BP11",
@@ -1658,7 +1658,7 @@
     },
     {
       "id": "I-06",
-      "kind": "暗黙の契約",
+      "kind": "implicit contract",
       "at": "web/checkout/api.ts",
       "feeds": [
         "BP03"
@@ -1669,7 +1669,7 @@
     {
       "key": "security-scan:F-001",
       "scan": "security-scan",
-      "title": "（架空）クーポン適用の認可を確認していない",
+      "title": "(Fictional) Applying a coupon does not check authorization",
       "severity": "Medium",
       "location": [
         "api/orders/routes.py:31"
@@ -1680,75 +1680,75 @@
     {
       "name": "BP01",
       "status": "applied",
-      "note": "修正履歴を分類し、現在のコードを読んだ"
+      "note": "Classified the fix history and read the current code"
     },
     {
       "name": "BP02",
       "status": "applied",
-      "note": "修正履歴を分類し、現在のコードを読んだ"
+      "note": "Classified the fix history and read the current code"
     },
     {
       "name": "BP03",
       "status": "applied",
-      "note": "修正履歴を分類し、現在のコードを読んだ"
+      "note": "Classified the fix history and read the current code"
     },
     {
       "name": "BP04",
       "status": "applied",
-      "note": "修正履歴を分類し、現在のコードを読んだ"
+      "note": "Classified the fix history and read the current code"
     },
     {
       "name": "BP05",
       "status": "applied",
-      "note": "修正履歴を分類し、現在のコードを読んだ"
+      "note": "Classified the fix history and read the current code"
     },
     {
       "name": "BP06",
       "status": "applied",
-      "note": "修正履歴を分類し、現在のコードを読んだ"
+      "note": "Classified the fix history and read the current code"
     },
     {
       "name": "BP07",
       "status": "applied",
-      "note": "修正履歴を分類し、現在のコードを読んだ"
+      "note": "Classified the fix history and read the current code"
     },
     {
       "name": "BP08",
       "status": "applied",
-      "note": "修正履歴を分類し、現在のコードを読んだ"
+      "note": "Classified the fix history and read the current code"
     },
     {
       "name": "BP09",
       "status": "applied",
-      "note": "修正履歴を分類し、現在のコードを読んだ"
+      "note": "Classified the fix history and read the current code"
     },
     {
       "name": "BP10",
       "status": "applied",
-      "note": "修正履歴を分類し、現在のコードを読んだ"
+      "note": "Classified the fix history and read the current code"
     },
     {
       "name": "BP11",
       "status": "applied",
-      "note": "修正履歴を分類し、現在のコードを読んだ"
+      "note": "Classified the fix history and read the current code"
     },
     {
       "name": "BP12",
       "status": "N/A",
-      "note": "該当する修正が無かった"
+      "note": "No matching fixes"
     }
   ],
   "checked_ok": [
-    "税計算の重複は api/billing/tax.py:120 に集約済みで、tests/test_tax.py:44 が固定している"
+    "The duplicated tax calculation is already consolidated in api/billing/tax.py:120, and tests/test_tax.py:44 pins it"
   ],
   "limitations": [
-    "見本のため、すべて架空のデータである",
-    "実データとログは読んでいないため、発生頻度と影響件数は未確認"
+    "This is a sample, so all data is fictional",
+    "Real data and logs were not read, so frequency and affected counts are unconfirmed"
   ],
   "decisions": [
-    "ブローカーの配信保証を確認する"
+    "Confirm the broker's delivery guarantee"
   ],
   "next_steps": [
-    "BG-001 と横展開先を同じ修正で直す"
+    "Fix BG-001 and its sibling sites with the same change"
   ]
 }

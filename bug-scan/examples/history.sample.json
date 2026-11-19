@@ -25,332 +25,332 @@
     "a19e5b10053c74da131ae70901ebd279d20550a1": {
       "date": "2026-02-21",
       "kind": "feature",
-      "subject": "feat: 入力検証を追加"
+      "subject": "feat: add input validation"
     },
     "a5bf7d2a1bdc86d66fa9bd6cce92db6f7f5a5486": {
       "date": "2026-03-09",
       "kind": "fix",
-      "subject": "fix: 空文字のクーポンを拒否"
+      "subject": "fix: reject empty coupons"
     },
     "a7e6bef900b59b349cd0c647d7fb4f5a2957029a": {
       "date": "2026-03-31",
       "kind": "fix",
-      "subject": "fix: 空白のみのクーポンを拒否"
+      "subject": "fix: reject whitespace-only coupons"
     },
     "00d850492b9b5f4410efeff633714d3fc03f46ef": {
       "date": "2026-05-12",
       "kind": "fix",
-      "subject": "fix: 全角空白のクーポンを拒否"
+      "subject": "fix: reject full-width-space coupons"
     },
     "28a339713111e9acfdcba2471493f40a5b96194b": {
       "date": "2026-06-21",
       "kind": "fix",
-      "subject": "fix: NBSP のクーポンを拒否"
+      "subject": "fix: reject NBSP coupons"
     },
     "e4e1e2f84d8425f04f986642a31ac27818706079": {
       "date": "2026-03-23",
       "kind": "refactor",
-      "subject": "refactor: 返金ジョブを分割"
+      "subject": "refactor: split the refund job"
     },
     "8629d1b22db8233ad0c4f9bf835dfd160be5508d": {
       "date": "2026-04-18",
       "kind": "fix",
-      "subject": "fix: 返金の順序を修正"
+      "subject": "fix: correct refund ordering"
     },
     "d4717e5a88f62ac8513cb583cffc8b1fde57b9ed": {
       "date": "2026-07-16",
       "kind": "fix",
-      "subject": "fix: 再実行時の二重返金を防止"
+      "subject": "fix: prevent double refunds on re-run"
     },
     "541bfe743064f232d05980387d4f3dfad3dd01cd": {
       "date": "2026-02-09",
       "kind": "feature",
-      "subject": "feat: 税計算を追加"
+      "subject": "feat: add tax calculation"
     },
     "aea804c2d9e105d3b3df247a241ebfc0ced1dbae": {
       "date": "2026-05-02",
       "kind": "fix",
-      "subject": "fix: 返金時の税を再計算"
+      "subject": "fix: recalculate tax on refund"
     },
     "88ed9d786c58a098e6f7dfcd5b0457a5d9e34f17": {
       "date": "2026-06-02",
       "kind": "dependency",
-      "subject": "chore(deps): 日付ライブラリを更新"
+      "subject": "chore(deps): update the date library"
     },
     "dbc7ae8d9fe2a61563e13e35abe5ecefcf4d708f": {
       "date": "2026-06-20",
       "kind": "fix",
-      "subject": "fix: 合計金額のキー名を修正"
+      "subject": "fix: correct the order total key name"
     },
     "7c91b33febac2cfe97b749d8f4500d947d22c81a": {
       "date": "2026-02-18",
       "kind": "fix",
-      "subject": "fix: 部分修正 の修正 (E-003)"
+      "subject": "fix: address partial fix (E-003)"
     },
     "9fa2c4b7b6a7e7025cf2d3e5891089afb204a630": {
       "date": "2026-02-12",
       "kind": "fix",
-      "subject": "fix: 変更 (E-003)"
+      "subject": "fix: change (E-003)"
     },
     "11f23710c3a83ea97028f53b28f452e70f3abbfc": {
       "date": "2026-02-23",
       "kind": "fix",
-      "subject": "fix: 部分修正 の修正 (E-004)"
+      "subject": "fix: address partial fix (E-004)"
     },
     "3f9fdfbc97635b70e25eccb19ca222da89ca7e6c": {
       "date": "2026-02-16",
       "kind": "fix",
-      "subject": "fix: 変更 (E-004)"
+      "subject": "fix: change (E-004)"
     },
     "32fa87c4718692c0d4b0056974082533d975c21a": {
       "date": "2026-03-05",
       "kind": "fix",
-      "subject": "fix: 部分修正 の修正 (E-006)"
+      "subject": "fix: address partial fix (E-006)"
     },
     "f1dbe12889768154430dd91849faa6e8fcf67070": {
       "date": "2026-02-24",
       "kind": "fix",
-      "subject": "fix: 変更 (E-006)"
+      "subject": "fix: change (E-006)"
     },
     "eae0a917f4b522dedb30b56002a2f4fd45b521b4": {
       "date": "2026-03-15",
       "kind": "fix",
-      "subject": "fix: 入力の形・境界値 の修正 (E-008)"
+      "subject": "fix: address input shape and boundaries (E-008)"
     },
     "a0df0faf4292f7e56d3239e19146f43f1a781245": {
       "date": "2026-03-04",
       "kind": "feature",
-      "subject": "feature: 変更 (E-008)"
+      "subject": "feature: change (E-008)"
     },
     "0733d5b26122ae9957858d2e583dd390da508fd7": {
       "date": "2026-03-20",
       "kind": "fix",
-      "subject": "fix: 入力の形・境界値 の修正 (E-009)"
+      "subject": "fix: address input shape and boundaries (E-009)"
     },
     "92a8572f80a792650a2c84fdc6bcc163a3476027": {
       "date": "2026-03-08",
       "kind": "feature",
-      "subject": "feature: 変更 (E-009)"
+      "subject": "feature: change (E-009)"
     },
     "483e1c0b92acd21bb605200c9274a77bd15d92f2": {
       "date": "2026-03-25",
       "kind": "fix",
-      "subject": "fix: 入力の形・境界値 の修正 (E-010)"
+      "subject": "fix: address input shape and boundaries (E-010)"
     },
     "1ae3ff8fa8ce4d7db6d2a70b8e39bb50f3ed7cf7": {
       "date": "2026-03-30",
       "kind": "fix",
-      "subject": "fix: 入力の形・境界値 の修正 (E-011)"
+      "subject": "fix: address input shape and boundaries (E-011)"
     },
     "514e023bb51c2150c98f4fa8b8e05b602a7676fe": {
       "date": "2026-04-09",
       "kind": "fix",
-      "subject": "fix: 重複ルールの乖離 の修正 (E-013)"
+      "subject": "fix: address duplicated rules that diverged (E-013)"
     },
     "f98f91b2ea2fb6f6b1c03689eda1370ff0a65352": {
       "date": "2026-03-24",
       "kind": "feature",
-      "subject": "feature: 変更 (E-013)"
+      "subject": "feature: change (E-013)"
     },
     "0905c32909b78e0b8e1d7bb032843d9f3cd78558": {
       "date": "2026-04-14",
       "kind": "fix",
-      "subject": "fix: 重複ルールの乖離 の修正 (E-014)"
+      "subject": "fix: address duplicated rules that diverged (E-014)"
     },
     "03dd8547fbebeb9878b51f6ed026dfbf1f0466a9": {
       "date": "2026-03-28",
       "kind": "feature",
-      "subject": "feature: 変更 (E-014)"
+      "subject": "feature: change (E-014)"
     },
     "d5168c476a89f88cdbe4ef8369df74eea4f6d924": {
       "date": "2026-04-19",
       "kind": "fix",
-      "subject": "fix: 値に見える失敗 の修正 (E-015)"
+      "subject": "fix: address failures that look like a value (E-015)"
     },
     "e8e1b993fb38cda90f4f068a1b9fe697c99a5987": {
       "date": "2026-04-24",
       "kind": "fix",
-      "subject": "fix: 値に見える失敗 の修正 (E-016)"
+      "subject": "fix: address failures that look like a value (E-016)"
     },
     "5281f0bf2dcdad16ef6125a980d454bef5ac347c": {
       "date": "2026-05-04",
       "kind": "fix",
-      "subject": "fix: 状態・順序 の修正 (E-018)"
+      "subject": "fix: address state and ordering (E-018)"
     },
     "4d4f9c78532a756394b6ddef9e094655d429493f": {
       "date": "2026-05-09",
       "kind": "fix",
-      "subject": "fix: 状態・順序 の修正 (E-019)"
+      "subject": "fix: address state and ordering (E-019)"
     },
     "f33bd0ac96073af41ef996546c6ae3f976a32fc3": {
       "date": "2026-05-19",
       "kind": "fix",
-      "subject": "fix: 重複ルールの乖離 の修正 (E-021)"
+      "subject": "fix: address duplicated rules that diverged (E-021)"
     },
     "48faa3ddcf5ad2f02ab9cf817689fc08888da354": {
       "date": "2026-04-25",
       "kind": "feature",
-      "subject": "feature: 変更 (E-021)"
+      "subject": "feature: change (E-021)"
     },
     "702a8a22645dc94bd1ff9b56eb55b4b4d043f455": {
       "date": "2026-05-24",
       "kind": "fix",
-      "subject": "fix: 契約のずれ の修正 (E-022)"
+      "subject": "fix: address contract drift (E-022)"
     },
     "c81f8028295abc96951561d977a78fbce354ae5e": {
       "date": "2026-04-29",
       "kind": "feature",
-      "subject": "feature: 変更 (E-022)"
+      "subject": "feature: change (E-022)"
     },
     "11317e15962521e0710a476cf3681fc53dc3778c": {
       "date": "2026-05-29",
       "kind": "fix",
-      "subject": "fix: 契約のずれ の修正 (E-023)"
+      "subject": "fix: address contract drift (E-023)"
     },
     "586840c2226d6ee974e7fa3e93fd746ad287af10": {
       "date": "2026-05-03",
       "kind": "feature",
-      "subject": "feature: 変更 (E-023)"
+      "subject": "feature: change (E-023)"
     },
     "2fc591dc094f99e511ee19c2f18db4be138f83d7": {
       "date": "2026-06-03",
       "kind": "fix",
-      "subject": "fix: 一部データのみ の修正 (E-024)"
+      "subject": "fix: address only some data (E-024)"
     },
     "eb58b3a86d6e4c83ddc8c7784fa2c09ec50923e3": {
       "date": "2026-06-08",
       "kind": "fix",
-      "subject": "fix: 一部データのみ の修正 (E-025)"
+      "subject": "fix: address only some data (E-025)"
     },
     "86be1db316cf4c591b7fc07f475121a5360384da": {
       "date": "2026-06-18",
       "kind": "fix",
-      "subject": "fix: 依存更新の変化 の修正 (E-027)"
+      "subject": "fix: address dependency upgrade changes (E-027)"
     },
     "864349ce78358613afb837c77d44e0311c9d2adb": {
       "date": "2026-05-19",
       "kind": "dependency",
-      "subject": "dependency: 変更 (E-027)"
+      "subject": "dependency: change (E-027)"
     },
     "617ad9215743a4d94d477b6fdd67dcf1e1eacdd8": {
       "date": "2026-06-23",
       "kind": "fix",
-      "subject": "fix: 環境差 の修正 (E-028)"
+      "subject": "fix: address environment differences (E-028)"
     },
     "4797ffd6311131c7feca2b8ec6c811c911516cbc": {
       "date": "2026-05-23",
       "kind": "config",
-      "subject": "config: 変更 (E-028)"
+      "subject": "config: change (E-028)"
     },
     "f30e397013585371e342c7065c1b5566363d829d": {
       "date": "2026-06-28",
       "kind": "fix",
-      "subject": "fix: 入力の形・境界値 の修正 (E-029)"
+      "subject": "fix: address input shape and boundaries (E-029)"
     },
     "73b843b93a3c5b5469aee17b6edba09909b5a616": {
       "date": "2026-07-03",
       "kind": "fix",
-      "subject": "fix: タイミング の修正 (E-030)"
+      "subject": "fix: address timing (E-030)"
     },
     "a494f7a6c4d35ddd79c92783c8f58b0f48584584": {
       "date": "2026-05-31",
       "kind": "feature",
-      "subject": "feature: 変更 (E-030)"
+      "subject": "feature: change (E-030)"
     },
     "54cdc8bc313352c0f11024855eb984a9bfcb0c88": {
       "date": "2026-07-08",
       "kind": "fix",
-      "subject": "fix: 配線切れ の修正 (E-031)"
+      "subject": "fix: address broken wiring (E-031)"
     },
     "7538ee107c4d4da5888d8b4382f44df4c46e0594": {
       "date": "2026-07-13",
       "kind": "fix",
-      "subject": "fix: Unclassified の修正 (E-032)"
+      "subject": "fix: address Unclassified (E-032)"
     },
     "3e4ccaa28ce35981181dea5da5d0989fffd02297": {
       "date": "2026-06-08",
       "kind": "refactor",
-      "subject": "refactor: 変更 (E-032)"
+      "subject": "refactor: change (E-032)"
     },
     "db9d9bb2eb689518a7519292b6c7f27917f11740": {
       "date": "2026-05-13",
       "kind": "fix",
-      "subject": "fix: 要件の変更 (E-033)"
+      "subject": "fix: requirement change (E-033)"
     },
     "7ac626017c91ac445f2a8e5a50e03f26eee807b4": {
       "date": "2026-05-16",
       "kind": "fix",
-      "subject": "fix: 要件の変更 (E-034)"
+      "subject": "fix: requirement change (E-034)"
     },
     "2faaa5f1ecceb58bd2a5b9158a16eaac20f0e85e": {
       "date": "2026-05-19",
       "kind": "fix",
-      "subject": "fix: 要件の変更 (E-035)"
+      "subject": "fix: requirement change (E-035)"
     },
     "61a15f97f3cbd1d46c4992d95168a96ca45383a4": {
       "date": "2026-05-22",
       "kind": "fix",
-      "subject": "fix: 要件の変更 (E-036)"
+      "subject": "fix: requirement change (E-036)"
     },
     "4f86e789253caabe88b6eceba5c0b61724c54be0": {
       "date": "2026-05-25",
       "kind": "fix",
-      "subject": "fix: 要件の変更 (E-037)"
+      "subject": "fix: requirement change (E-037)"
     },
     "9384dbe397816433e547a30ad4e674d7c2414a81": {
       "date": "2026-05-28",
       "kind": "fix",
-      "subject": "fix: 要件の変更 (E-038)"
+      "subject": "fix: requirement change (E-038)"
     },
     "c42a1db82424dad910a5a611f06e6773e280f931": {
       "date": "2026-05-31",
       "kind": "fix",
-      "subject": "fix: 要件の変更 (E-039)"
+      "subject": "fix: requirement change (E-039)"
     },
     "8780a83a8e7ccd72ff3d6ed21018dd8f321d8b3c": {
       "date": "2026-06-03",
       "kind": "fix",
-      "subject": "fix: 要件の変更 (E-040)"
+      "subject": "fix: requirement change (E-040)"
     },
     "e32b1577d64d2a4e7594424303740a1645e6302d": {
       "date": "2026-06-06",
       "kind": "fix",
-      "subject": "fix: 要件の変更 (E-041)"
+      "subject": "fix: requirement change (E-041)"
     },
     "f9b5815003a72256ec9191b4e1c38cd909b1ec6c": {
       "date": "2026-06-09",
       "kind": "fix",
-      "subject": "fix: 文書の訂正 (E-042)"
+      "subject": "fix: documentation correction (E-042)"
     },
     "39568ff9ab6c39c76f8e004c85dbb6df4306d969": {
       "date": "2026-06-12",
       "kind": "fix",
-      "subject": "fix: 文書の訂正 (E-043)"
+      "subject": "fix: documentation correction (E-043)"
     },
     "eb1998171c6fcf5348860ff24e00a03f0efd5410": {
       "date": "2026-06-15",
       "kind": "fix",
-      "subject": "fix: 文書の訂正 (E-044)"
+      "subject": "fix: documentation correction (E-044)"
     },
     "b5685faa6114845c45624a2a424032814a7a4ddb": {
       "date": "2026-06-18",
       "kind": "fix",
-      "subject": "fix: 文書の訂正 (E-045)"
+      "subject": "fix: documentation correction (E-045)"
     },
     "c1eca595013dae63569e99cd8d83928fe5880ee6": {
       "date": "2026-06-21",
       "kind": "fix",
-      "subject": "fix: 文書の訂正 (E-046)"
+      "subject": "fix: documentation correction (E-046)"
     },
     "aeaf141924ce3169131010a042469cb5a4faa693": {
       "date": "2026-06-24",
       "kind": "fix",
-      "subject": "fix: 文書の訂正 (E-047)"
+      "subject": "fix: documentation correction (E-047)"
     },
     "b8f8ecc3f7e6fcd3913e26c7c179c86c2f533ab7": {
       "date": "2026-06-27",
       "kind": "fix",
-      "subject": "fix: 文書の訂正 (E-048)"
+      "subject": "fix: documentation correction (E-048)"
     }
   },
   "modules": [
@@ -407,7 +407,7 @@
     {
       "commit": "a7e6bef900b59b349cd0c647d7fb4f5a2957029a",
       "date": "2026-03-31",
-      "subject": "fix: 空白のみのクーポンを拒否",
+      "subject": "fix: reject whitespace-only coupons",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -415,7 +415,7 @@
     {
       "commit": "28a339713111e9acfdcba2471493f40a5b96194b",
       "date": "2026-06-21",
-      "subject": "fix: NBSP のクーポンを拒否",
+      "subject": "fix: reject NBSP coupons",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -423,7 +423,7 @@
     {
       "commit": "7c91b33febac2cfe97b749d8f4500d947d22c81a",
       "date": "2026-02-18",
-      "subject": "fix: 部分修正 の修正 (E-003)",
+      "subject": "fix: address partial fix (E-003)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -431,7 +431,7 @@
     {
       "commit": "11f23710c3a83ea97028f53b28f452e70f3abbfc",
       "date": "2026-02-23",
-      "subject": "fix: 部分修正 の修正 (E-004)",
+      "subject": "fix: address partial fix (E-004)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -439,7 +439,7 @@
     {
       "commit": "00d850492b9b5f4410efeff633714d3fc03f46ef",
       "date": "2026-05-12",
-      "subject": "fix: 全角空白のクーポンを拒否",
+      "subject": "fix: reject full-width-space coupons",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -447,7 +447,7 @@
     {
       "commit": "32fa87c4718692c0d4b0056974082533d975c21a",
       "date": "2026-03-05",
-      "subject": "fix: 部分修正 の修正 (E-006)",
+      "subject": "fix: address partial fix (E-006)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -455,7 +455,7 @@
     {
       "commit": "a5bf7d2a1bdc86d66fa9bd6cce92db6f7f5a5486",
       "date": "2026-03-09",
-      "subject": "fix: 空文字のクーポンを拒否",
+      "subject": "fix: reject empty coupons",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -463,7 +463,7 @@
     {
       "commit": "eae0a917f4b522dedb30b56002a2f4fd45b521b4",
       "date": "2026-03-15",
-      "subject": "fix: 入力の形・境界値 の修正 (E-008)",
+      "subject": "fix: address input shape and boundaries (E-008)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -471,7 +471,7 @@
     {
       "commit": "0733d5b26122ae9957858d2e583dd390da508fd7",
       "date": "2026-03-20",
-      "subject": "fix: 入力の形・境界値 の修正 (E-009)",
+      "subject": "fix: address input shape and boundaries (E-009)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -479,7 +479,7 @@
     {
       "commit": "483e1c0b92acd21bb605200c9274a77bd15d92f2",
       "date": "2026-03-25",
-      "subject": "fix: 入力の形・境界値 の修正 (E-010)",
+      "subject": "fix: address input shape and boundaries (E-010)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -487,7 +487,7 @@
     {
       "commit": "1ae3ff8fa8ce4d7db6d2a70b8e39bb50f3ed7cf7",
       "date": "2026-03-30",
-      "subject": "fix: 入力の形・境界値 の修正 (E-011)",
+      "subject": "fix: address input shape and boundaries (E-011)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -495,7 +495,7 @@
     {
       "commit": "aea804c2d9e105d3b3df247a241ebfc0ced1dbae",
       "date": "2026-05-02",
-      "subject": "fix: 返金時の税を再計算",
+      "subject": "fix: recalculate tax on refund",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -503,7 +503,7 @@
     {
       "commit": "514e023bb51c2150c98f4fa8b8e05b602a7676fe",
       "date": "2026-04-09",
-      "subject": "fix: 重複ルールの乖離 の修正 (E-013)",
+      "subject": "fix: address duplicated rules that diverged (E-013)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -511,7 +511,7 @@
     {
       "commit": "0905c32909b78e0b8e1d7bb032843d9f3cd78558",
       "date": "2026-04-14",
-      "subject": "fix: 重複ルールの乖離 の修正 (E-014)",
+      "subject": "fix: address duplicated rules that diverged (E-014)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -519,7 +519,7 @@
     {
       "commit": "d5168c476a89f88cdbe4ef8369df74eea4f6d924",
       "date": "2026-04-19",
-      "subject": "fix: 値に見える失敗 の修正 (E-015)",
+      "subject": "fix: address failures that look like a value (E-015)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -527,7 +527,7 @@
     {
       "commit": "e8e1b993fb38cda90f4f068a1b9fe697c99a5987",
       "date": "2026-04-24",
-      "subject": "fix: 値に見える失敗 の修正 (E-016)",
+      "subject": "fix: address failures that look like a value (E-016)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -535,7 +535,7 @@
     {
       "commit": "d4717e5a88f62ac8513cb583cffc8b1fde57b9ed",
       "date": "2026-07-16",
-      "subject": "fix: 再実行時の二重返金を防止",
+      "subject": "fix: prevent double refunds on re-run",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -543,7 +543,7 @@
     {
       "commit": "5281f0bf2dcdad16ef6125a980d454bef5ac347c",
       "date": "2026-05-04",
-      "subject": "fix: 状態・順序 の修正 (E-018)",
+      "subject": "fix: address state and ordering (E-018)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -551,7 +551,7 @@
     {
       "commit": "4d4f9c78532a756394b6ddef9e094655d429493f",
       "date": "2026-05-09",
-      "subject": "fix: 状態・順序 の修正 (E-019)",
+      "subject": "fix: address state and ordering (E-019)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -559,7 +559,7 @@
     {
       "commit": "8629d1b22db8233ad0c4f9bf835dfd160be5508d",
       "date": "2026-04-18",
-      "subject": "fix: 返金の順序を修正",
+      "subject": "fix: correct refund ordering",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -567,7 +567,7 @@
     {
       "commit": "f33bd0ac96073af41ef996546c6ae3f976a32fc3",
       "date": "2026-05-19",
-      "subject": "fix: 重複ルールの乖離 の修正 (E-021)",
+      "subject": "fix: address duplicated rules that diverged (E-021)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -575,7 +575,7 @@
     {
       "commit": "702a8a22645dc94bd1ff9b56eb55b4b4d043f455",
       "date": "2026-05-24",
-      "subject": "fix: 契約のずれ の修正 (E-022)",
+      "subject": "fix: address contract drift (E-022)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -583,7 +583,7 @@
     {
       "commit": "11317e15962521e0710a476cf3681fc53dc3778c",
       "date": "2026-05-29",
-      "subject": "fix: 契約のずれ の修正 (E-023)",
+      "subject": "fix: address contract drift (E-023)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -591,7 +591,7 @@
     {
       "commit": "2fc591dc094f99e511ee19c2f18db4be138f83d7",
       "date": "2026-06-03",
-      "subject": "fix: 一部データのみ の修正 (E-024)",
+      "subject": "fix: address only some data (E-024)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -599,7 +599,7 @@
     {
       "commit": "eb58b3a86d6e4c83ddc8c7784fa2c09ec50923e3",
       "date": "2026-06-08",
-      "subject": "fix: 一部データのみ の修正 (E-025)",
+      "subject": "fix: address only some data (E-025)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -607,7 +607,7 @@
     {
       "commit": "dbc7ae8d9fe2a61563e13e35abe5ecefcf4d708f",
       "date": "2026-06-20",
-      "subject": "fix: 合計金額のキー名を修正",
+      "subject": "fix: correct the order total key name",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -615,7 +615,7 @@
     {
       "commit": "86be1db316cf4c591b7fc07f475121a5360384da",
       "date": "2026-06-18",
-      "subject": "fix: 依存更新の変化 の修正 (E-027)",
+      "subject": "fix: address dependency upgrade changes (E-027)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -623,7 +623,7 @@
     {
       "commit": "617ad9215743a4d94d477b6fdd67dcf1e1eacdd8",
       "date": "2026-06-23",
-      "subject": "fix: 環境差 の修正 (E-028)",
+      "subject": "fix: address environment differences (E-028)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -631,7 +631,7 @@
     {
       "commit": "f30e397013585371e342c7065c1b5566363d829d",
       "date": "2026-06-28",
-      "subject": "fix: 入力の形・境界値 の修正 (E-029)",
+      "subject": "fix: address input shape and boundaries (E-029)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -639,7 +639,7 @@
     {
       "commit": "73b843b93a3c5b5469aee17b6edba09909b5a616",
       "date": "2026-07-03",
-      "subject": "fix: タイミング の修正 (E-030)",
+      "subject": "fix: address timing (E-030)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -647,7 +647,7 @@
     {
       "commit": "54cdc8bc313352c0f11024855eb984a9bfcb0c88",
       "date": "2026-07-08",
-      "subject": "fix: 配線切れ の修正 (E-031)",
+      "subject": "fix: address broken wiring (E-031)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -655,7 +655,7 @@
     {
       "commit": "7538ee107c4d4da5888d8b4382f44df4c46e0594",
       "date": "2026-07-13",
-      "subject": "fix: Unclassified の修正 (E-032)",
+      "subject": "fix: address Unclassified (E-032)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -663,7 +663,7 @@
     {
       "commit": "db9d9bb2eb689518a7519292b6c7f27917f11740",
       "date": "2026-05-13",
-      "subject": "fix: 要件の変更 (E-033)",
+      "subject": "fix: requirement change (E-033)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -671,7 +671,7 @@
     {
       "commit": "7ac626017c91ac445f2a8e5a50e03f26eee807b4",
       "date": "2026-05-16",
-      "subject": "fix: 要件の変更 (E-034)",
+      "subject": "fix: requirement change (E-034)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -679,7 +679,7 @@
     {
       "commit": "2faaa5f1ecceb58bd2a5b9158a16eaac20f0e85e",
       "date": "2026-05-19",
-      "subject": "fix: 要件の変更 (E-035)",
+      "subject": "fix: requirement change (E-035)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -687,7 +687,7 @@
     {
       "commit": "61a15f97f3cbd1d46c4992d95168a96ca45383a4",
       "date": "2026-05-22",
-      "subject": "fix: 要件の変更 (E-036)",
+      "subject": "fix: requirement change (E-036)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -695,7 +695,7 @@
     {
       "commit": "4f86e789253caabe88b6eceba5c0b61724c54be0",
       "date": "2026-05-25",
-      "subject": "fix: 要件の変更 (E-037)",
+      "subject": "fix: requirement change (E-037)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -703,7 +703,7 @@
     {
       "commit": "9384dbe397816433e547a30ad4e674d7c2414a81",
       "date": "2026-05-28",
-      "subject": "fix: 要件の変更 (E-038)",
+      "subject": "fix: requirement change (E-038)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -711,7 +711,7 @@
     {
       "commit": "c42a1db82424dad910a5a611f06e6773e280f931",
       "date": "2026-05-31",
-      "subject": "fix: 要件の変更 (E-039)",
+      "subject": "fix: requirement change (E-039)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -719,7 +719,7 @@
     {
       "commit": "8780a83a8e7ccd72ff3d6ed21018dd8f321d8b3c",
       "date": "2026-06-03",
-      "subject": "fix: 要件の変更 (E-040)",
+      "subject": "fix: requirement change (E-040)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -727,7 +727,7 @@
     {
       "commit": "e32b1577d64d2a4e7594424303740a1645e6302d",
       "date": "2026-06-06",
-      "subject": "fix: 要件の変更 (E-041)",
+      "subject": "fix: requirement change (E-041)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -735,7 +735,7 @@
     {
       "commit": "f9b5815003a72256ec9191b4e1c38cd909b1ec6c",
       "date": "2026-06-09",
-      "subject": "fix: 文書の訂正 (E-042)",
+      "subject": "fix: documentation correction (E-042)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -743,7 +743,7 @@
     {
       "commit": "39568ff9ab6c39c76f8e004c85dbb6df4306d969",
       "date": "2026-06-12",
-      "subject": "fix: 文書の訂正 (E-043)",
+      "subject": "fix: documentation correction (E-043)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -751,7 +751,7 @@
     {
       "commit": "eb1998171c6fcf5348860ff24e00a03f0efd5410",
       "date": "2026-06-15",
-      "subject": "fix: 文書の訂正 (E-044)",
+      "subject": "fix: documentation correction (E-044)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -759,7 +759,7 @@
     {
       "commit": "b5685faa6114845c45624a2a424032814a7a4ddb",
       "date": "2026-06-18",
-      "subject": "fix: 文書の訂正 (E-045)",
+      "subject": "fix: documentation correction (E-045)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -767,7 +767,7 @@
     {
       "commit": "c1eca595013dae63569e99cd8d83928fe5880ee6",
       "date": "2026-06-21",
-      "subject": "fix: 文書の訂正 (E-046)",
+      "subject": "fix: documentation correction (E-046)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -775,7 +775,7 @@
     {
       "commit": "aeaf141924ce3169131010a042469cb5a4faa693",
       "date": "2026-06-24",
-      "subject": "fix: 文書の訂正 (E-047)",
+      "subject": "fix: documentation correction (E-047)",
       "match": "prefix",
       "files": [],
       "test_changed": true
@@ -783,7 +783,7 @@
     {
       "commit": "b8f8ecc3f7e6fcd3913e26c7c179c86c2f533ab7",
       "date": "2026-06-27",
-      "subject": "fix: 文書の訂正 (E-048)",
+      "subject": "fix: documentation correction (E-048)",
       "match": "prefix",
       "files": [],
       "test_changed": true

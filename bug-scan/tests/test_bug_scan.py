@@ -32,8 +32,8 @@ import surfaces  # noqa: E402
 
 
 def sample():
-    return (common.load_json(ROOT / "examples" / "findings.sample.json"), common.load_json(ROOT / "examples" / "surfaces.sample.json"),
-            common.load_json(ROOT / "examples" / "history.sample.json"))
+    return (common.load_json(ROOT / "examples" / "findings.sample.ja.json"), common.load_json(ROOT / "examples" / "surfaces.sample.ja.json"),
+            common.load_json(ROOT / "examples" / "history.sample.ja.json"))
 
 
 def run_git(repo, *args, env=None):
@@ -603,7 +603,7 @@ class ExportTests(TempDir):
         self.run_dir = self.dir / "run"
         self.run_dir.mkdir()
         for name in ("findings", "surfaces", "history"):
-            shutil.copy(ROOT / "examples" / f"{name}.sample.json", self.run_dir / f"{name}.json")
+            shutil.copy(ROOT / "examples" / f"{name}.sample.ja.json", self.run_dir / f"{name}.json")
         self.record_path = self.run_dir / "findings.json"
         self.record, _, _ = sample()
 

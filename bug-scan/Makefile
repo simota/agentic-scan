@@ -21,6 +21,8 @@ AGY_HOME   ?= $(HOME)/.gemini/antigravity-cli
 DEMO_OUT ?= $(or $(TMPDIR),/tmp)/$(NAME)-demo
 LANG_OUT ?= ja
 NO_PDF   ?=
+# the sample in the report language: examples/*.sample.json (en) or *.sample.ja.json
+SAMPLE   := $(if $(filter ja,$(LANG_OUT)),.ja,)
 
 tgt_claude := $(HOME)/.claude $(HOME)/.claude/skills
 tgt_codex  := $(CODEX_HOME) $(CODEX_HOME)/skills
@@ -93,8 +95,9 @@ check: test ## verify the skill is self-contained and internally consistent
 	  $(PYTHON) -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read(), sys.argv[1], feature_version=(3,9))' "$$p" \
 	    || { echo "MISS $$p does not parse on Python 3.9" >&2; fail=1; }; \
 	done; \
+	for sfx in "" .ja; do \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
-	cp examples/findings.sample.json "$$out/findings.json"; cp examples/surfaces.sample.json "$$out/surfaces.json"; cp examples/history.sample.json "$$out/history.json"; \
+	for n in findings surfaces history; do cp "examples/$$n.sample$$sfx.json" "$$out/$$n.json"; done; \
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $$skill/scripts/findings.py renumber "$$out/findings.json" | grep -q 'already in order' \
 	  || { echo "MISS the sample is not numbered in priority order" >&2; fail=1; }; \
 	en="$$out/en"; mkdir -p "$$en"; \
@@ -115,9 +118,10 @@ check: test ## verify the skill is self-contained and internally consistent
 	  && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $$skill/scripts/impact.py "$$out" --files api/orders/validate.py >/dev/null \
 	  || { echo "MISS the sample does not export or analyse" >&2; fail=1; }; \
 	rm -rf "$$out" "$$out.frag" "$$exp"; \
+	done; \
 	[ $$fail -eq 0 ] && echo "check ok"; exit $$fail
 
 demo: ## render the sample into DEMO_OUT (LANG_OUT=en, NO_PDF=1)
-	@mkdir -p "$(DEMO_OUT)" && cp examples/findings.sample.json "$(DEMO_OUT)/findings.json" \
-	  && cp examples/surfaces.sample.json "$(DEMO_OUT)/surfaces.json" && cp examples/history.sample.json "$(DEMO_OUT)/history.json" \
+	@mkdir -p "$(DEMO_OUT)" && cp examples/findings.sample$(SAMPLE).json "$(DEMO_OUT)/findings.json" \
+	  && cp examples/surfaces.sample$(SAMPLE).json "$(DEMO_OUT)/surfaces.json" && cp examples/history.sample$(SAMPLE).json "$(DEMO_OUT)/history.json" \
 	  && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(SKILL)/scripts/render.py "$(DEMO_OUT)/findings.json" --out "$(DEMO_OUT)" --lang $(LANG_OUT) $(if $(NO_PDF),--no-pdf,)

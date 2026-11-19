@@ -90,7 +90,7 @@ skills/bug-scan/
   reference/               recon, gates, surfaces, history, taxonomy, tracking, validation, diagrams, schema, report
   scripts/                 standard library only
   scripts/scan_report_kit/ shared report format, maintained here (scan-report-kit is retired)
-examples/                  fictional acme-shop record, for make demo and make check
+examples/                  fictional acme-shop record in English (*.sample.json) and Japanese (*.sample.ja.json), for make demo and make check
 tests/                     offline tests
 docs/plans/                the design and a diagram sample
 docs/quality/              the SQI rubric, its measured report and the audit scripts (development only)

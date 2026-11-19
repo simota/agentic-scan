@@ -12,7 +12,7 @@ On 2026-11-19 the brand was rebuilt in the "terminal / agent" direction.
 
 ## Location and how to open
 
-- Source: `site/` (`index.html`, `styles.css`, `main.js`, `assets/`)
+- Source: `site/` (`index.html`, `ja/index.html`, `styles.css`, `main.js`, `assets/`)
 - Run:
 
   ```sh
@@ -21,6 +21,14 @@ On 2026-11-19 the brand was rebuilt in the "terminal / agent" direction.
   ```
 
 - Build: not needed (no dependencies and no build step)
+
+## Languages
+
+- English is the default: `site/index.html`. The Japanese page is `site/ja/index.html`.
+- Each page links to the other from the header (`日本語` / `English`) and declares the pair with `hreflang`. There is no automatic redirect by browser language.
+- The English page shows the English samples (`examples/findings.sample.json`) and dashboards rendered in English (`assets/en/`); the Japanese page shows the Japanese samples and dashboards (`assets/`).
+- `main.js` picks the copy-button text from the page's `lang`.
+- The evaluation, QA and screenshots below were made on the Japanese page before the English page existed.
 
 ## Final evaluation
 

@@ -58,3 +58,8 @@ No build is needed.
 ## Impact on existing files
 
 Only `site/` and `artifacts/lp/` were touched; the skill directories and the root README / Makefile were not modified. Nothing was committed.
+
+## Later changes
+
+- The dashboard images were replaced with the console-triage dashboards (Japanese).
+- English became the default page (`site/index.html`), with English dashboard images in `site/assets/en/`; the Japanese page moved to `site/ja/index.html`. See the Languages section of `README.md`.

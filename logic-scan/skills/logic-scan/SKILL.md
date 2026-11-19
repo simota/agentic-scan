@@ -33,7 +33,7 @@ Neighbours, and where their questions go instead (all out of scope here):
 |---|---|
 | Write the fix | A separate request to write the code |
 | One known bug: reproduce it and find its cause | A debugging request for that one bug |
-| Review one diff before it merges | A code review of that change |
+| Review one diff before it merges for anything beyond its business logic (style, naming, general defects) | A code review of that change; its business logic can be reviewed here in diff mode |
 | Stored data corrupted by schema, migrations, transactions or database-level lost updates; column types for money and time; constraints that would keep a status and its fields consistent | A data-integrity review of the schema and write paths |
 | Who may do what: authorization, tenancy, parameter tampering | A security review of the application's source |
 | Behaviour when a dependency fails: timeouts, retries, fallbacks that hide a failed call, double submits and idempotency of retried calls | An architecture review of failure handling and operability |
@@ -198,6 +198,7 @@ requires it.
 | Asked to re-assess and keep the earlier triage (accepted results) | Run the new assessment independently first (no peeking at the earlier record while reviewing), renumber, then `scripts/compare.py <earlier>/findings.json <out>/findings.json --carry <scratch>/carry.json`, read what it carried and what it refused to carry (a severity that rose), `scripts/findings.py merge <out>/findings.json <scratch>/carry.json`, render and check. Name the carried decisions in the chat summary |
 | Asked to gate CI on logic regressions | `scripts/compare.py <baseline>/findings.json <out>/findings.json --fail-on High` exits `3` on a new, reappeared, re-reported or raised finding at or above that severity |
 | Asked to send findings to code scanning, a CI annotation or an IDE | `scripts/sarif.py <out>/findings.json --out <scratch>/logic.sarif [--min-severity Medium]`: SARIF 2.1.0, one result per finding to act on (excluded, `Unlikely` and `Fixed` left out, `Accepted` suppressed), the counterexample under `properties`. Uploading it is the requester's step |
+| Asked to review only a diff: a branch against its base, a pull request, a commit range or uncommitted changes | Diff mode (`reference/diff-mode.md`): `scripts/diffscope.py scope <repo> --base <ref> --out <scratch>/diff.json`, cut the review units to the changed files and the code they reach, keep a finding only when the change causes, exposes or worsens it (`scripts/diffscope.py locate`), and record the printed scope line in `meta.scope` and "Diff mode … Not a full assessment" in `limitations` |
 
 ## Always / Never
 

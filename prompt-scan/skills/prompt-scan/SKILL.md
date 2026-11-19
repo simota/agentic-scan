@@ -67,6 +67,7 @@ to a security review of the application's source (IG5):
 | A model ID may be deprecated or retired | Check the vendor's current model list, not recall; without it, record the question in `decisions` |
 | A secret or personal data is in a prompt | Report its location and kind only. Never copy the value into any output |
 | Two prompts serve the same job with different wording | One finding at the duplication (Maintainability), plus a defect finding for each divergence that changes behaviour |
+| Asked to review only a diff: a branch against its base, a pull request, a commit range or uncommitted changes | Diff mode (`reference/diff-mode.md`): `scripts/diffscope.py scope <repo> --base <ref> --out <scratch>/diff.json`, cut the review units to the changed files and the code they reach, keep a finding only when the change causes, exposes or worsens it (`scripts/diffscope.py locate`), and record the printed scope line in `meta.scope` and "Diff mode … Not a full assessment" in `limitations` |
 
 ## Before starting
 

@@ -111,6 +111,7 @@ the limitation `report.pdf not produced: <reason>`, render with `--no-pdf`, and 
 | Asked for code scanning, editor annotations or a spreadsheet | `scripts/export.py sarif` or `csv`, written outside `<out>`. The SARIF fingerprint is the tracking key |
 | Asked which recorded defects a change touches (review, CI) | `scripts/impact.py <out> --repo <repo> [--base REF] [--head REF]`; `--fail-on High` exits 1 for a gate. Touching nothing is not proof of safety |
 | A person accepts a risk, or withdraws an acceptance | `scripts/ledger.py set <ledger> <key> --status Accepted\|Open --owner TEAM --reason TEXT`; `ledger.py list` shows the ledger |
+| Asked to review only a diff: a branch against its base, a pull request, a commit range or uncommitted changes | Diff mode (`reference/diff-mode.md`): `scripts/diffscope.py scope <repo> --base <ref> --out <scratch>/diff.json`, cut the review units to the changed files and the code they reach, keep a finding only when the change causes, exposes or worsens it (`scripts/diffscope.py locate`), and record the printed scope line in `meta.scope` and "Diff mode … Not a full assessment" in `limitations` |
 
 ## Always / Never
 
